@@ -116,9 +116,7 @@ int main(void)
 
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
-    mesh_type msh;
     
-    disk::fvca5_mesh_loader<T, 2> loader;
     
     if(0)
     {
@@ -132,6 +130,8 @@ int main(void)
 
         for(size_t i=0; i < meshfiles.size(); i++)
         {
+            mesh_type msh;
+            disk::fvca5_mesh_loader<T, 2> loader;
             if (!loader.read_mesh(meshfiles.at(i)) )
             {
                 std::cout << "Problem loading mesh." << std::endl;
@@ -143,6 +143,8 @@ int main(void)
     }
     else
     {
+        mesh_type msh;
+        disk::fvca5_mesh_loader<T, 2> loader;
         std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1";
         if (!loader.read_mesh(mesh_filename) )
         {
