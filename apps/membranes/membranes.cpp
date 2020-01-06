@@ -14,6 +14,73 @@
 #include "solvers/solver.hpp"
 #include "core/loaders/loader.hpp"
 
+
+/////////////////////////////   OUTPUT   OBJECTS  ////////////////////////////////
+template<typename T>
+class postprocess_output_object {
+
+public:
+    postprocess_output_object()
+    {}
+
+    virtual bool write() = 0;
+};
+
+template<typename T>
+class gnuplot_output_object : public postprocess_output_object<T>
+{
+    std::string                                 output_filename;
+    std::vector< std::pair< point<T,2>, T > >   data;
+
+public:
+    gnuplot_output_object(const std::string& filename)
+        : output_filename(filename)
+    {}
+
+    void add_data(const point<T,2>& pt, const T& val)
+    {
+        data.push_back( std::make_pair(pt, val) );
+    }
+
+    bool write()
+    {
+        std::ofstream ofs(output_filename);
+
+        for (auto& d : data)
+            ofs << d.first.x() << " " << d.first.y() << " " << d.second << std::endl;
+
+        ofs.close();
+
+        return true;
+    }
+};
+
+template<typename T>
+class postprocess_output
+{
+    std::list< std::shared_ptr< postprocess_output_object<T>> >     postprocess_objects;
+
+public:
+    postprocess_output()
+    {}
+
+    void add_object( std::shared_ptr<postprocess_output_object<T>> obj )
+    {
+        postprocess_objects.push_back( obj );
+    }
+
+    bool write(void) const
+    {
+        for (auto& obj : postprocess_objects)
+            obj->write();
+
+        return true;
+    }
+};
+
+
+////////////////////////////   MAIN  CODE  ////////////////////////////////
+
 using namespace disk;
 
 template<typename Mesh>
@@ -72,6 +139,11 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     //std::ofstream ofs("sol.dat");
 
+    postprocess_output<T>  postoutput;
+
+    auto diff_uT_gp  = std::make_shared< gnuplot_output_object<T> >("diff_uT.dat");
+    auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
+
     for (auto& cl : msh)
     {
         auto cb     = make_scalar_monomial_basis(msh, cl, hdi.cell_degree());
@@ -91,7 +163,14 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         auto diff = realsol - fullsol;
         error += diff.dot(A*diff);
 
-        //auto bar = barycenter(msh, cl);
+        auto bar = barycenter(msh, cl);
+        diff_uT_gp->add_data( bar, diff.dot(A*diff) );
+
+
+        auto test = fullsol.head( cb.size() );
+        T sol_uT = test.dot( cb.eval_functions(bar) );
+        // T sol = fullsol.head( cb.size() ).dot( cb );
+        uT_gp->add_data( bar, sol_uT );
 
         //for (size_t i = 0; i < Mesh::dimension; i++)
         //    ofs << bar[i] << " ";
@@ -102,6 +181,10 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     //std::cout << std::sqrt(error) << std::endl;
 
     //ofs.close();
+
+    postoutput.add_object(diff_uT_gp);
+    postoutput.add_object(uT_gp);
+    postoutput.write();
 
     std::cout << "ended run : error is " << std::sqrt(error) << std::endl;
     
