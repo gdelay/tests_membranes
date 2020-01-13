@@ -509,6 +509,8 @@ class diffusion_assembler
     hho_degree_info         di;
     std::vector<Triplet<T>> triplets;
     bool                    use_bnd;
+    std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
+    std::vector< Matrix<T, Dynamic, 1> >       loc_RHS;
 
     size_t num_all_faces, num_dirichlet_faces, num_other_faces, system_size;
 
@@ -575,12 +577,27 @@ public:
             }
         }
 
+        auto num_cells = msh.cells_size();
+        loc_LHS.resize( num_cells );
+        loc_RHS.resize( num_cells );
+
         const auto fbs = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
         const auto cbs = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
-        system_size    = cbs * msh.cells_size() + fbs * num_other_faces;
+        system_size    = 2 * (cbs * num_cells + fbs * num_other_faces);
 
         LHS = SparseMatrix<T>(system_size, system_size);
         RHS = vector_type::Zero(system_size);
+    }
+
+    void
+    set_loc_mat(const Mesh&                     msh,
+                const typename Mesh::cell_type& cl,
+                const matrix_type&              lhs,
+                const vector_type&              rhs)
+    {
+        auto cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
     }
 
     template<typename Function>
@@ -655,9 +672,36 @@ public:
 
     } // assemble()
 
+
+    // init : set no contact constraint and assemble matrix
+    // (first iteration matrix)
+    template<typename Function>
+    void
+    init(const Mesh&                     msh,
+         const Function&                 dirichlet_bf)
+    {
+        // assemble all local contributions for Laplacian part
+        for (auto& cl : msh)
+        {
+            auto cell_offset = offset(msh, cl);
+            assemble(msh, cl, loc_LHS.at(cell_offset), loc_RHS.at(cell_offset), dirichlet_bf);
+        }
+        // assemble constraints (no contact)
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        auto mult_offset = cbs * msh.cells_size() + fbs * num_other_faces;
+        for(size_t i = 0; i < mult_offset; i++)
+        {
+            triplets.push_back( Triplet<T>(mult_offset + i, mult_offset + i, 1.0) );
+        }
+
+        // end assembly
+        finalize();
+    }
+
     template<typename Function>
     vector_type
-    take_local_data(const Mesh& msh, const typename Mesh::cell_type& cl,
+    take_u(const Mesh& msh, const typename Mesh::cell_type& cl,
     const vector_type& solution, const Function& dirichlet_bf)
     {
         auto celdeg = di.cell_degree();
@@ -697,6 +741,54 @@ public:
             {
                 auto face_offset = priv::offset(msh, fc);
                 auto face_SOL_offset = msh.cells_size() * cbs + compress_table.at(face_offset)*fbs;
+                ret.block(cbs + face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        return ret;
+    }
+
+
+    vector_type
+    take_mult(const Mesh& msh, const typename Mesh::cell_type& cl,
+              const vector_type& solution)
+    {
+        auto celdeg = di.cell_degree();
+        auto facdeg = di.face_degree();
+        auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
+        auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+
+        auto num_faces = fcs.size();
+
+        auto mult_offset = cbs * msh.cells_size() + fbs * num_other_faces;
+        auto cell_offset        = offset(msh, cl);
+        auto cell_SOL_offset    = mult_offset + cell_offset * cbs;
+
+        vector_type ret = vector_type::Zero(cbs + num_faces*fbs);
+        ret.block(0, 0, cbs, 1) = solution.block(cell_SOL_offset, 0, cbs, 1);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+                return msh.is_boundary(fc);
+            };
+
+            bool dirichlet = is_dirichlet(fc);
+
+            if (dirichlet)
+            {
+                // no contact on the boundary
+                for(size_t i = 0; i < fbs; i++)
+                    ret(cbs + face_i*fbs + i) = 0.0;
+            }
+            else
+            {
+                auto face_offset = priv::offset(msh, fc);
+                auto face_SOL_offset = mult_offset
+                    + msh.cells_size() * cbs + compress_table.at(face_offset)*fbs;
                 ret.block(cbs + face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
             }
         }
@@ -832,7 +924,9 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             assembler_sc.assemble(msh, cl, sc.first, sc.second, sol_fun);
         }
         else
-            assembler.assemble(msh, cl, A, rhs, sol_fun);
+        {
+            assembler.set_loc_mat(msh, cl, A, rhs);
+        }
     }
 
     size_t systsz, nnz;
@@ -844,7 +938,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     }
     else
     {
-        assembler.finalize();
+        assembler.init(msh, sol_fun);
         systsz = assembler.LHS.rows();
         // nnz = assembler.LHS.nonZeros();
     }
@@ -871,6 +965,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     auto diff_uT_gp  = std::make_shared< gnuplot_output_object<T> >("diff_uT.dat");
     auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
+    auto multT_gp  = std::make_shared< gnuplot_output_object<T> >("multT.dat");
 
     for (auto& cl : msh)
     {
@@ -880,7 +975,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
         // Eigen::Matrix<T, Eigen::Dynamic, 1> realsol = project_function(msh, cl, hdi, sol_fun, 2);
         Eigen::Matrix<T, Eigen::Dynamic, 1> realsol = project_function(msh, cl, cb, sol_fun, 2);
-        Eigen::Matrix<T, Eigen::Dynamic, 1> fullsol;
+        Eigen::Matrix<T, Eigen::Dynamic, 1> fullsol, mult_sol;
         auto gr     = make_vector_hho_gradrec_Lag(msh, cl, hdi);
         auto stab   = make_scalar_hdg_stabilization_Lag(msh, cl, hdi);
         auto rhs    = make_rhs(msh, cl, cb, rhs_fun);
@@ -894,7 +989,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             fullsol = make_scalar_static_decondensation(msh, cl, hdi, A, rhs, locsol);
         }
         else
-            fullsol = assembler.take_local_data(msh, cl, sol, sol_fun);
+            fullsol = assembler.take_u(msh, cl, sol, sol_fun);
 
         auto diff = realsol - fullsol.head( cb.size() );
         error += diff.dot(A.block(0,0,cbs,cbs) * diff);
@@ -908,10 +1003,14 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         // T sol = fullsol.head( cb.size() ).dot( cb );
         uT_gp->add_data( bar, sol_uT );
 
-        //for (size_t i = 0; i < Mesh::dimension; i++)
-        //    ofs << bar[i] << " ";
-        //ofs << fullsol(0) << std::endl;
 
+        if(scond) {}
+        else
+            mult_sol = assembler.take_mult(msh, cl, sol);
+
+        auto test2 = mult_sol.head( cb.size() );
+        T sol_multT = test2.dot( cb.eval_functions(bar) );
+        multT_gp->add_data( bar, sol_multT );
     }
 
     //std::cout << std::sqrt(error) << std::endl;
@@ -920,6 +1019,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     postoutput.add_object(diff_uT_gp);
     postoutput.add_object(uT_gp);
+    postoutput.add_object(multT_gp);
     postoutput.write();
 
     std::cout << "ended run : error is " << std::sqrt(error) << std::endl;
