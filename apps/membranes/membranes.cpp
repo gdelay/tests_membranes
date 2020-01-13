@@ -602,11 +602,10 @@ public:
 
     template<typename Function>
     void
-    assemble(const Mesh&                     msh,
-             const typename Mesh::cell_type& cl,
-             const matrix_type&              lhs,
-             const vector_type&              rhs,
-             const Function&                 dirichlet_bf)
+    assemble_mat(const Mesh&                     msh,
+                 const typename Mesh::cell_type& cl,
+                 const matrix_type&              lhs,
+                 const Function&                 dirichlet_bf)
     {
         if(use_bnd)
             throw std::invalid_argument("diffusion_assembler: you have to use boundary type");
@@ -658,7 +657,69 @@ public:
             {
                 if ( asm_map[j].assemble() )
                     triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs(i,j)) );
-                else
+            }
+        }
+
+    } // assemble_mat()
+
+
+    template<typename Function>
+    void
+    assemble_rhs(const Mesh&                     msh,
+                 const typename Mesh::cell_type& cl,
+                 const matrix_type&              lhs,
+                 const vector_type&              rhs,
+                 const Function&                 dirichlet_bf)
+    {
+        if(use_bnd)
+            throw std::invalid_argument("diffusion_assembler: you have to use boundary type");
+
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return msh.is_boundary(fc);
+        };
+
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        const auto fcs = faces(msh, cl);
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(cbs + fcs.size() * fbs);
+
+        auto cell_offset        = offset(msh, cl);
+        auto cell_LHS_offset    = cell_offset * cbs;
+
+        for (size_t i = 0; i < cbs; i++)
+                asm_map.push_back( assembly_index(cell_LHS_offset+i, true) );
+
+        vector_type dirichlet_data = vector_type::Zero(cbs + fcs.size()*fbs);
+
+        for (size_t face_i = 0; face_i < fcs.size(); face_i++)
+        {
+            const auto fc              = fcs[face_i];
+            const auto face_offset     = priv::offset(msh, fc);
+            const auto face_LHS_offset = msh.cells_size() * cbs + compress_table.at(face_offset) * fbs;
+
+            const bool dirichlet = is_dirichlet(fc);
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                auto fb = make_scalar_Lagrange_basis(msh, fc, di.face_degree());
+                dirichlet_data.block(cbs + face_i * fbs, 0, fbs, 1) =
+                  project_function(msh, fc, fb, dirichlet_bf, di.face_degree());
+            }
+        }
+
+        for (size_t i = 0; i < lhs.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs.cols(); j++)
+            {
+                if ( !asm_map[j].assemble() )
                     RHS(asm_map[i]) -= lhs(i,j) * dirichlet_data(j);
             }
         }
@@ -670,8 +731,7 @@ public:
             RHS(asm_map[i]) += rhs(i);
         }
 
-    } // assemble()
-
+    } // assemble_rhs()
 
     // init : set no contact constraint and assemble matrix
     // (first iteration matrix)
@@ -684,7 +744,8 @@ public:
         for (auto& cl : msh)
         {
             auto cell_offset = offset(msh, cl);
-            assemble(msh, cl, loc_LHS.at(cell_offset), loc_RHS.at(cell_offset), dirichlet_bf);
+            assemble_mat(msh, cl, loc_LHS.at(cell_offset), dirichlet_bf);
+            assemble_rhs(msh, cl, loc_LHS.at(cell_offset), loc_RHS.at(cell_offset), dirichlet_bf);
         }
         // assemble constraints (no contact)
         const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension - 1);
@@ -698,6 +759,72 @@ public:
         // end assembly
         finalize();
     }
+
+    // update_mat : assemble matrix according to the previous iteration solution
+    template<typename Function>
+    void
+    update_mat(const Mesh&                     msh,
+               const vector_type&              prev_sol,
+               const Function&                 dirichlet_bf)
+    {
+        // assemble all local contributions for Laplacian part
+        for (auto& cl : msh)
+        {
+            auto cell_offset = offset(msh, cl);
+            assemble_mat(msh, cl, loc_LHS.at(cell_offset), dirichlet_bf);
+        }
+        // assemble constraints
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        auto mult_offset = cbs * msh.cells_size() + fbs * num_other_faces;
+
+        for(size_t i = 0; i < mult_offset; i++)
+        {
+            auto sol_u    = prev_sol(i);
+            auto sol_mult = prev_sol(mult_offset + i);
+
+            if(sol_u <= 0.0 && sol_mult >= 0)
+                triplets.push_back( Triplet<T>(mult_offset + i, i, 1.0) );
+            else
+                triplets.push_back( Triplet<T>(mult_offset + i, mult_offset + i, 1.0) );
+        }
+
+        // identity block
+        for(size_t i = 0; i < mult_offset; i++)
+        {
+            triplets.push_back( Triplet<T>(i, mult_offset + i, -1.0) );
+        }
+
+        // end assembly
+        finalize();
+    }
+
+
+    bool
+    stop(const Mesh&         msh,
+         const vector_type&  sol)
+    {
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        auto mult_offset = cbs * msh.cells_size() + fbs * num_other_faces;
+
+        bool ret = true;
+        for(size_t i = 0; i < mult_offset; i++)
+        {
+            auto sol_u    = sol(i);
+            auto sol_mult = sol(mult_offset + i);
+
+            if(sol_u < 0.0 || sol_mult < 0.0)
+            {
+                ret = false;
+                break;
+            }
+        }
+
+        return ret;
+    }
+
+
 
     template<typename Function>
     vector_type
@@ -896,14 +1023,24 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     hho_degree_info hdi(degree+1, degree);
 
     auto rhs_fun = [](const point_type& pt) -> T {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        return 2.0 * M_PI * M_PI * sin_px * sin_py;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return 8.0 * R2 - 16.0 * r2;
+        else
+            return - 8.0 * R2;
     };
     auto sol_fun = [](const point_type& pt) -> T {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        return sin_px * sin_py;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return (r2 - R2) * (r2 - R2);
+        else
+            return 0.0;
     };
 
     auto assembler_sc = make_diffusion_assembler(msh, hdi);
@@ -930,36 +1067,41 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     }
 
     size_t systsz, nnz;
-    if(scond)
+    dynamic_vector<T> sol;
+    size_t Newton_iter = 0;
+    bool stop_loop = false;
+    while(!stop_loop)
     {
-        assembler_sc.finalize();
-        systsz = assembler_sc.LHS.rows();
-        // nnz = assembler_sc.LHS.nonZeros();
-    }
-    else
-    {
-        assembler.init(msh, sol_fun);
-        systsz = assembler.LHS.rows();
-        // nnz = assembler.LHS.nonZeros();
-    }
+        if(scond)
+        {
+            assembler_sc.finalize();
+            systsz = assembler_sc.LHS.rows();
+        }
+        else
+        {
+            if(Newton_iter == 0)
+                assembler.init(msh, sol_fun);
+            else
+                assembler.update_mat(msh, sol, sol_fun);
+            systsz = assembler.LHS.rows();
+        }
+        sol = dynamic_vector<T>::Zero(systsz);
 
-    //std::cout << "Mesh elements: " << msh.cells_size() << std::endl;
-    //std::cout << "Mesh faces: " << msh.faces_size() << std::endl;
-    //std::cout << "Dofs: " << systsz << std::endl;
+        disk::solvers::pardiso_params<T> pparams;
+        pparams.report_factorization_Mflops = false;
 
-    dynamic_vector<T> sol = dynamic_vector<T>::Zero(systsz);
+        if(scond)
+            mkl_pardiso(pparams, assembler_sc.LHS, assembler_sc.RHS, sol);
+        else
+            mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
 
-    disk::solvers::pardiso_params<T> pparams;
-    pparams.report_factorization_Mflops = false;
+        Newton_iter++;
+        std::cout << blue << "end Newton iter nb " << Newton_iter << std::endl;
 
-    if(scond)
-        mkl_pardiso(pparams, assembler_sc.LHS, assembler_sc.RHS, sol);
-    else
-        mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
+        stop_loop = assembler.stop(msh, sol);
+    } // Newton loop
 
     T error = 0.0;
-
-    //std::ofstream ofs("sol.dat");
 
     postprocess_output<T>  postoutput;
 
@@ -1022,7 +1164,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     postoutput.add_object(multT_gp);
     postoutput.write();
 
-    std::cout << "ended run : error is " << std::sqrt(error) << std::endl;
+    std::cout << yellow << "ended run : error is " << std::sqrt(error) << std::endl;
     
     return std::sqrt(error);
 }
@@ -1064,7 +1206,7 @@ int main(void)
     {
         mesh_type msh;
         disk::fvca5_mesh_loader<T, 2> loader;
-        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1";
+        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1";
         if (!loader.read_mesh(mesh_filename) )
         {
             std::cout << "Problem loading mesh." << std::endl;
