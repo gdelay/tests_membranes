@@ -93,16 +93,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
             ret(0) = 1.0;
         else
         {   // basis_degree == 1
-            auto pts = ref_points;
-            auto x0 = pts[0].x(); auto y0 = pts[0].y();
-            auto x1 = pts[1].x(); auto y1 = pts[1].y();
-            auto x2 = pts[2].x(); auto y2 = pts[2].y();
-
-            auto m = (x1*y2 - y1*x2 - x0*(y2 - y1) + y0*(x2 - x1));
-
-            ret(0) = (x1*y2 - y1*x2 - pt.x() * (y2 - y1) + pt.y() * (x2 - x1)) / m;
-            ret(1) = (x2*y0 - y2*x0 + pt.x() * (y2 - y0) - pt.y() * (x2 - x0)) / m;
-            ret(2) = (x0*y1 - y0*x1 - pt.x() * (y1 - y0) + pt.y() * (x1 - x0)) / m;
+            ret = bar_coord(pt);
         }
         return ret;
     }
@@ -119,19 +110,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
         }
         else
         {   // basis_degree == 1
-            auto pts = ref_points;
-            auto x0 = pts[0].x(); auto y0 = pts[0].y();
-            auto x1 = pts[1].x(); auto y1 = pts[1].y();
-            auto x2 = pts[2].x(); auto y2 = pts[2].y();
-
-            auto m = (x1*y2 - y1*x2 - x0*(y2 - y1) + y0*(x2 - x1));
-
-            ret(0,0) = (y1 - y2) / m;
-            ret(1,0) = (y2 - y0) / m;
-            ret(2,0) = (y0 - y1) / m;
-            ret(0,1) = (x2 - x1) / m;
-            ret(1,1) = (x0 - x2) / m;
-            ret(2,1) = (x1 - x0) / m;
+            ret = bar_coord_grad(pt);
         }
         return ret;
     }
@@ -146,6 +125,50 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
     degree() const
     {
         return basis_degree;
+    }
+
+
+    // barycentric coordinates
+    function_type
+    bar_coord(const point_type& pt) const
+    {
+        function_type ret = function_type::Zero(basis_size);
+
+        auto pts = ref_points;
+        auto x0 = pts[0].x(); auto y0 = pts[0].y();
+        auto x1 = pts[1].x(); auto y1 = pts[1].y();
+        auto x2 = pts[2].x(); auto y2 = pts[2].y();
+
+        auto m = (x1*y2 - y1*x2 - x0*(y2 - y1) + y0*(x2 - x1));
+
+        ret(0) = (x1*y2 - y1*x2 - pt.x() * (y2 - y1) + pt.y() * (x2 - x1)) / m;
+        ret(1) = (x2*y0 - y2*x0 + pt.x() * (y2 - y0) - pt.y() * (x2 - x0)) / m;
+        ret(2) = (x0*y1 - y0*x1 - pt.x() * (y1 - y0) + pt.y() * (x1 - x0)) / m;
+
+        return ret;
+    }
+
+    // gradients of the barycentric coordinates
+    gradient_type
+    bar_coord_grad(const point_type& pt) const
+    {
+        gradient_type ret = gradient_type::Zero(basis_size, 2);
+
+        auto pts = ref_points;
+        auto x0 = pts[0].x(); auto y0 = pts[0].y();
+        auto x1 = pts[1].x(); auto y1 = pts[1].y();
+        auto x2 = pts[2].x(); auto y2 = pts[2].y();
+
+        auto m = (x1*y2 - y1*x2 - x0*(y2 - y1) + y0*(x2 - x1));
+
+        ret(0,0) = (y1 - y2) / m;
+        ret(1,0) = (y2 - y0) / m;
+        ret(2,0) = (y0 - y1) / m;
+        ret(0,1) = (x2 - x1) / m;
+        ret(1,1) = (x0 - x2) / m;
+        ret(2,1) = (x1 - x0) / m;
+
+        return ret;
     }
 };
 
