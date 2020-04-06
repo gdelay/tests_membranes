@@ -53,7 +53,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
     typedef Matrix<scalar_type, Dynamic, 1>     function_type;
 
   private:
-    std::vector<point_type>       ref_points;
+    std::vector<point_type>       vertices;
     size_t                        basis_degree, basis_size;
 
 #ifdef POWER_CACHE
@@ -63,25 +63,19 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
   public:
     Lagrange_scalar_basis(const mesh_type& msh, const cell_type& cl, size_t degree)
     {
-        if( degree > 1 )
-            throw std::invalid_argument("degree != 1 not yet supported");
+        if( degree > 2 )
+            throw std::invalid_argument("degree > 2 not yet supported");
         basis_degree = degree;
 
+        // store the vertices
+        vertices = points(msh, cl);
+
         if(degree == 0)
-        {
             basis_size  = 1;
-            ref_points.reserve(basis_size);
-            ref_points.push_back( barycenter(msh, cl) );
-        }
-        else // degree == 1
-        {
+        else if(degree == 1)
             basis_size   = 3;
-            auto pts = points(msh, cl);
-            ref_points.reserve(basis_size);
-            ref_points.push_back( pts[0] );
-            ref_points.push_back( pts[1] );
-            ref_points.push_back( pts[2] );
-        }
+        else // degree == 2
+            basis_size   = 6;
     }
 
     function_type
@@ -91,9 +85,21 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
 
         if(basis_degree == 0)
             ret(0) = 1.0;
-        else
-        {   // basis_degree == 1
+        else if(basis_degree == 1)
+        {
             ret = bar_coord(pt);
+        }
+        else // degree == 2
+        {
+            auto bar_c = bar_coord(pt);
+            // 0-2 : vertices
+            for(size_t i = 0; i < 3; i++)
+                ret[i] = bar_c[i] * (2.0*bar_c[i] - 1.0);
+
+            // 3-5 : mid-points (12,02,01)
+            ret[3] = 4.0*bar_c[1]*bar_c[2];
+            ret[4] = 4.0*bar_c[0]*bar_c[2];
+            ret[5] = 4.0*bar_c[0]*bar_c[1];
         }
         return ret;
     }
@@ -108,9 +114,28 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
             ret(0,0) = 0.0;
             ret(0,1) = 0.0;
         }
-        else
-        {   // basis_degree == 1
+        else if(basis_degree == 1)
+        {
             ret = bar_coord_grad(pt);
+        }
+        else // degree == 2
+        {
+            auto bar_c = bar_coord(pt);
+            auto bar_c_g = bar_coord_grad(pt);
+
+            // 0-2 : vertices
+            for(size_t i = 0; i < 3; i++)
+            {
+                ret(i,0) = (4.0*bar_c[i]-1.0) * bar_c_g(i,0);
+                ret(i,1) = (4.0*bar_c[i]-1.0) * bar_c_g(i,1);
+            }
+            // 3-5 : mid-points (12,02,01)
+            for(size_t j = 0; j < 2; j++)
+            {
+                ret(3,j) = 4.0*( bar_c[1]*bar_c_g(2,j) + bar_c[2]*bar_c_g(1,j) );
+                ret(4,j) = 4.0*( bar_c[0]*bar_c_g(2,j) + bar_c[2]*bar_c_g(0,j) );
+                ret(5,j) = 4.0*( bar_c[0]*bar_c_g(1,j) + bar_c[1]*bar_c_g(0,j) );
+            }
         }
         return ret;
     }
@@ -134,7 +159,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
     {
         function_type ret = function_type::Zero(basis_size);
 
-        auto pts = ref_points;
+        auto pts = vertices;
         auto x0 = pts[0].x(); auto y0 = pts[0].y();
         auto x1 = pts[1].x(); auto y1 = pts[1].y();
         auto x2 = pts[2].x(); auto y2 = pts[2].y();
@@ -154,7 +179,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
     {
         gradient_type ret = gradient_type::Zero(basis_size, 2);
 
-        auto pts = ref_points;
+        auto pts = vertices;
         auto x0 = pts[0].x(); auto y0 = pts[0].y();
         auto x1 = pts[1].x(); auto y1 = pts[1].y();
         auto x2 = pts[2].x(); auto y2 = pts[2].y();
@@ -185,6 +210,8 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::f
     typedef Matrix<scalar_type, Dynamic, 1>     function_type;
 
   private:
+    point_type  face_ref, base;
+    scalar_type face_h;
     size_t      basis_degree, basis_size;
 
 #ifdef POWER_CACHE
@@ -194,10 +221,15 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::f
   public:
     Lagrange_scalar_basis(const mesh_type& msh, const face_type& fc, size_t degree)
     {
-        if( degree != 0 )
-            throw std::invalid_argument("degree != 0 not yet supported");
+        if( degree > 1 )
+            throw std::invalid_argument("degree > 1 not yet supported");
         basis_degree = degree;
         basis_size   = degree + 1;
+
+        const auto pts = points(msh, fc);
+        face_ref = pts[0];
+        face_h       = diameter(msh, fc);
+        base = pts[1] - pts[0];
     }
 
     function_type
@@ -205,7 +237,19 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::f
     {
         function_type ret = function_type::Zero(basis_size);
 
-        ret(0) = 1.0;
+        // pos on the face
+        const auto v   = base.to_vector();
+        const auto t   = (pt - face_ref).to_vector();
+        const auto dot = v.dot(t);
+        const auto pos = dot/(face_h*face_h); // 0 -> pts[0], 1 -> pts[1]
+
+        if(basis_degree == 0)
+            ret(0) = 1.0;
+        else // degree == 1
+        {
+            ret(0) = - pos + 1.0;
+            ret(1) = pos;
+        }
         return ret;
     }
 
@@ -1878,6 +1922,8 @@ int main(void)
 {
     using T = double;
 
+    // degree of the polynomials on the faces
+    size_t degree = 0;
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
     
@@ -1901,7 +1947,7 @@ int main(void)
                 std::cout << "Problem loading mesh." << std::endl;
             }
             loader.populate_mesh(msh);
-            run_membranes_solver(msh, 0);
+            run_membranes_solver(msh, degree);
         }
 
     }
@@ -1915,7 +1961,7 @@ int main(void)
             std::cout << "Problem loading mesh." << std::endl;
         }
         loader.populate_mesh(msh);
-        run_membranes_solver(msh, 0);
+        run_membranes_solver(msh, degree);
     }
     return 0;
 }
