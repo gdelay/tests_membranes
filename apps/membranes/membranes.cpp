@@ -1631,6 +1631,7 @@ public:
         auto cell_offset        = offset(msh, cl);
         auto celdeg = di.cell_degree();
         auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
+        const auto cb = make_scalar_Lagrange_basis(msh, cl, celdeg);
 
         matrix_type D = matrix_type::Zero(cbs, 2*cbs);
 
@@ -1649,7 +1650,28 @@ public:
         auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
         auto num_faces = howmany_faces(msh, cl);
 
-        return full_sol.tail(cbs + num_faces * fbs);
+        // multT in the primal base
+        auto multT_dual = full_sol.tail(cbs + num_faces * fbs).head(cbs);
+        auto mass_matrixT = make_mass_matrix(msh, cl, cb);
+        vector_type multT_primal = mass_matrixT.ldlt().solve(multT_dual);
+
+        // multF in the primal base
+        vector_type multF_primal = vector_type::Zero(num_faces*fbs);
+        const auto fcs = faces(msh, cl);
+        for(size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            const auto fc = fcs[face_i];
+            const auto fb = make_scalar_Lagrange_basis(msh, fc, facdeg);
+
+            auto multF_dual = full_sol.tail(num_faces * fbs).block(face_i*fbs,0,fbs,1);
+            auto mass_matrixF = make_mass_matrix(msh, fc, fb);
+            multF_primal.block(face_i*fbs,0,fbs,1) = mass_matrixF.ldlt().solve(multF_dual);
+        }
+
+        vector_type ret = vector_type::Zero(cbs + num_faces*fbs);
+        ret.head(cbs) = multT_primal;
+        ret.tail(num_faces * fbs) = multF_primal;
+        return ret;
     }
 
     void finalize(void)
