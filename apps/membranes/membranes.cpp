@@ -1828,6 +1828,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     hho_degree_info hdi(degree+1, degree);
 
+#if 0
     auto rhs_fun = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
         auto y1 = pt.y() - 0.5;
@@ -1848,6 +1849,28 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         else
             return 0.0;
     };
+#else
+    auto rhs_fun = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return -24.0*(r2-R2)*(r2-R2)*(r2-R2)*(r2-R2)*(6.0*r2-R2);
+        else
+            return -r2*(R2-r2)*(R2-r2)*(R2-r2);
+    };
+    auto sol_fun = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2);
+        else
+            return 0.0;
+    };
+#endif
 
     auto assembler_sc = make_condensed_assembler_Lag(msh, hdi);
     auto assembler = make_assembler_Lag(msh, hdi);
