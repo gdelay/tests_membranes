@@ -158,7 +158,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
             // 0-2 : vertices
             for(size_t i = 0; i < 3; i++)
             {
-                T coeff = 1.5 * (9.0*bar_c[i]*bar_c[i] - 6.0 * bar_c[i] + 1.0);
+                T coeff = 0.5 * (27.0*bar_c[i]*bar_c[i] - 18.0 * bar_c[i] + 2.0);
                 ret(i,0) = coeff * bar_c_g(i,0);
                 ret(i,1) = coeff * bar_c_g(i,1);
             }
