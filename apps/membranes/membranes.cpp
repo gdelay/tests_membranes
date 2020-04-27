@@ -1849,6 +1849,35 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         else
             return 0.0;
     };
+    auto sol_grad = [](const point_type& pt) -> auto {
+        Matrix<T, 1, 2> ret;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+        {
+            T coeff = 2.0*2.0*(r2 - R2);
+            ret(0) =  coeff * x1;
+            ret(1) =  coeff * y1;
+        }
+        else
+        {
+            ret(0) = 0.0;
+            ret(1) = 0.0;
+        }
+        return ret;
+    };
+    auto mult_fun = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return 0.0;
+        else
+            return 8.0 * R2;
+    };
 #else
     auto rhs_fun = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
@@ -1869,6 +1898,36 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             return (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2);
         else
             return 0.0;
+    };
+    auto sol_grad = [](const point_type& pt) -> auto {
+        Matrix<T, 1, 2> ret;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+        {
+            T coeff = 2.0*6.0*(r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2) * (r2 - R2);
+            ret(0) =  coeff * x1;
+            ret(1) =  coeff * y1;
+        }
+        else
+        {
+            ret(0) = 0.0;
+            ret(1) = 0.0;
+        }
+
+        return ret;
+    };
+    auto mult_fun = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return 0.0;
+        else
+            return r2*(R2-r2)*(R2-r2)*(R2-r2);
     };
 #endif
 
@@ -1937,7 +1996,9 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     std::cout << "Start post-process" << std::endl;
 
-    T error = 0.0;
+    T u_H1_error = 0.0;
+    T u_L2_error = 0.0;
+    T mult_L2_error = 0.0;
 
     postprocess_output<T>  postoutput;
 
@@ -1960,29 +2021,54 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> A = gr.second + stab;
 
         if(scond)
+        {
             fullsol = assembler_sc.take_u(msh, cl, sol, sol_fun);
+            mult_sol = assembler_sc.take_mult(msh, cl, sol, sol_fun);
+        }
         else
+        {
             fullsol = assembler.take_u(msh, cl, sol, sol_fun);
+            mult_sol = assembler.take_mult(msh, cl, sol);
+        }
 
         auto diff = realsol - fullsol.head( cb.size() );
-        error += diff.dot(A.block(0,0,cbs,cbs) * diff);
 
-        auto uT = fullsol.head( cb.size() );
+        auto cell_dofs = fullsol.head( cb.size() );
+        auto mult_cell_dofs = mult_sol.head( cb.size() );
 
-        if(scond)
-            mult_sol = assembler_sc.take_mult(msh, cl, sol, sol_fun);
-        else
-            mult_sol = assembler.take_mult(msh, cl, sol);
+        // errors
+        const auto celdeg = hdi.cell_degree();
+        const auto qps = integrate(msh, cl, 2*celdeg);
+        for (auto& qp : qps)
+        {
+            auto grad_ref = sol_grad( qp.point() );
+            auto t_dphi = cb.eval_gradients( qp.point() );
+            Matrix<T, 1, 2> grad = Matrix<T, 1, 2>::Zero();
 
-        auto multT = mult_sol.head( cb.size() );
+            for (size_t i = 0; i < cbs; i++ )
+                grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
+
+            // H1-error
+            u_H1_error += qp.weight() * (grad_ref - grad).dot(grad_ref - grad);
+
+            // L2-error
+            auto t_phi = cb.eval_functions( qp.point() );
+            T v = cell_dofs.dot( t_phi );
+            u_L2_error += qp.weight() * (sol_fun(qp.point()) - v) * (sol_fun(qp.point()) - v);
+
+            // mult-L2-error
+            T mult = mult_cell_dofs.dot( t_phi );
+            T mult_sol = mult_fun(qp.point());
+            mult_L2_error += qp.weight() * (mult_sol - mult) * (mult_sol - mult);
+        }
 
         // gnuplot output for cells
         auto pts = points(msh, cl);
         for(size_t i=0; i < pts.size(); i++)
         {
-            T sol_uT = uT.dot( cb.eval_functions( pts[i] ) );
+            T sol_uT = cell_dofs.dot( cb.eval_functions( pts[i] ) );
             uT_gp->add_data( pts[i], sol_uT );
-            T sol_multT = multT.dot( cb.eval_functions(pts[i]) );
+            T sol_multT = mult_cell_dofs.dot( cb.eval_functions(pts[i]) );
             multT_gp->add_data( pts[i], sol_multT );
         }
 
@@ -2012,9 +2098,11 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     postoutput.add_object(multF_gp);
     postoutput.write();
 
-    std::cout << yellow << "ended run : error is " << std::sqrt(error) << std::endl;
+    std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
+    std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
+    std::cout << yellow << "            mult-L2-error is " << std::sqrt(mult_L2_error) << std::endl;
     
-    return std::sqrt(error);
+    return std::sqrt(u_H1_error);
 }
 
 using namespace Eigen;
