@@ -63,8 +63,8 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
   public:
     Lagrange_scalar_basis(const mesh_type& msh, const cell_type& cl, size_t degree)
     {
-        if( degree > 3 )
-            throw std::invalid_argument("degree > 3 not yet supported");
+        if( degree > 4 )
+            throw std::invalid_argument("degree > 4 not yet supported");
         basis_degree = degree;
 
         // store the vertices
@@ -96,7 +96,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
             ret[4] = 4.0*bar_c[0]*bar_c[2];
             ret[5] = 4.0*bar_c[0]*bar_c[1];
         }
-        else // degree == 3
+        else if(basis_degree == 3)
         {
             auto bar_c = bar_coord(pt);
             // 0-2 : vertices
@@ -113,6 +113,32 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
 
             // 9 : center of mass
             ret[9] = 27.0*bar_c[0]*bar_c[1]*bar_c[2];
+        }
+        else // degree == 4
+        {
+            auto bar_c = bar_coord(pt);
+            // 0-2 : vertices
+            for(size_t i = 0; i < 3; i++)
+                ret[i] = (1.0/6.0)*bar_c[i] * (4.0*bar_c[i] - 1.0)
+                    * (4.0*bar_c[i] - 2.0) * (4.0*bar_c[i] - 3.0);
+
+            // 3-5 : mid-points (12,02,01)
+            ret[3] = 4.0*bar_c[1]*bar_c[2]*(4.0*bar_c[1]-1.0)*(4.0*bar_c[2]-1.0);
+            ret[4] = 4.0*bar_c[0]*bar_c[2]*(4.0*bar_c[0]-1.0)*(4.0*bar_c[2]-1.0);
+            ret[5] = 4.0*bar_c[0]*bar_c[1]*(4.0*bar_c[0]-1.0)*(4.0*bar_c[1]-1.0);
+
+            // 6-11 : face-points (1112,1222,0002,0222,0001,0111)
+            ret[6] = (8.0/3.0)*bar_c[1]*bar_c[2]*(4.0*bar_c[1]-1.0)*(4.0*bar_c[1]-2.0);
+            ret[7] = (8.0/3.0)*bar_c[2]*bar_c[1]*(4.0*bar_c[2]-1.0)*(4.0*bar_c[2]-2.0);
+            ret[8] = (8.0/3.0)*bar_c[0]*bar_c[2]*(4.0*bar_c[0]-1.0)*(4.0*bar_c[0]-2.0);
+            ret[9] = (8.0/3.0)*bar_c[2]*bar_c[0]*(4.0*bar_c[2]-1.0)*(4.0*bar_c[2]-2.0);
+            ret[10] = (8.0/3.0)*bar_c[0]*bar_c[1]*(4.0*bar_c[0]-1.0)*(4.0*bar_c[0]-2.0);
+            ret[11] = (8.0/3.0)*bar_c[1]*bar_c[0]*(4.0*bar_c[1]-1.0)*(4.0*bar_c[1]-2.0);
+
+            // 12-14 : others (0012,0112,0122)
+            ret[12] = 32.0 * bar_c[0]*bar_c[1]*bar_c[2]*(4.0*bar_c[0]-1.0);
+            ret[13] = 32.0 * bar_c[0]*bar_c[1]*bar_c[2]*(4.0*bar_c[1]-1.0);
+            ret[14] = 32.0 * bar_c[0]*bar_c[1]*bar_c[2]*(4.0*bar_c[2]-1.0);
         }
         return ret;
     }
@@ -150,7 +176,7 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
                 ret(5,j) = 4.0*( bar_c[0]*bar_c_g(1,j) + bar_c[1]*bar_c_g(0,j) );
             }
         }
-        else // degree == 3
+        else if(basis_degree == 3)
         {
             auto bar_c = bar_coord(pt);
             auto bar_c_g = bar_coord_grad(pt);
@@ -186,7 +212,79 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
                                    + bar_c[2] * bar_c[0] * bar_c_g(1,j) );
             }
         }
+        else // degree == 4
+        {
+            auto bar_c = bar_coord(pt);
+            auto bar_c_g = bar_coord_grad(pt);
+            // 0-2 : vertices
+            for(size_t i = 0; i < 3; i++)
+            {
+                T coeff = (1.0/6.0) * (256.0*bar_c[i]*bar_c[i]*bar_c[i] - 288.0*bar_c[i]*bar_c[i]
+                                       + 88.0*bar_c[i] - 6.0);
+                ret(i,0) = coeff * bar_c_g(i,0);
+                ret(i,1) = coeff * bar_c_g(i,1);
+            }
+            // 3-5 : mid-points (12,02,01)
+            for(size_t j = 0; j < 2; j++)
+            {
+                ret(3,j) =
+                    4.0*bar_c[1]*(32.0*bar_c[1]*bar_c[2] - 4.0*(2.0*bar_c[2]+bar_c[1]) + 1.0)*bar_c_g(2,j)
+                    + 4.0*bar_c[2]*(32.0*bar_c[2]*bar_c[1] - 4.0*(2.0*bar_c[1]+bar_c[2])+1.0)*bar_c_g(1,j);
 
+                ret(4,j) =
+                    4.0*bar_c[0]*(32.0*bar_c[0]*bar_c[2] - 4.0*(2.0*bar_c[2]+bar_c[0]) + 1.0)*bar_c_g(2,j)
+                    + 4.0*bar_c[2]*(32.0*bar_c[2]*bar_c[0] - 4.0*(2.0*bar_c[0]+bar_c[2])+1.0)*bar_c_g(0,j);
+
+                ret(5,j) =
+                    4.0*bar_c[0]*(32.0*bar_c[0]*bar_c[1] - 4.0*(2.0*bar_c[1]+bar_c[0]) + 1.0)*bar_c_g(1,j)
+                    + 4.0*bar_c[1]*(32.0*bar_c[1]*bar_c[0] - 4.0*(2.0*bar_c[0]+bar_c[1])+1.0)*bar_c_g(0,j);
+            }
+            // 6-11 : face-points (1112,1222,0002,0222,0001,0111)
+            for(size_t j = 0; j < 2; j++)
+            {
+                ret(6,j) =
+                    (16.0/3.0) * bar_c[2] * (24.0*bar_c[1]*bar_c[1] -12.0*bar_c[1] + 1.0)*bar_c_g(1,j)
+                    +(16.0/3.0) * bar_c[1] * (8.0*bar_c[1]*bar_c[1] -6.0*bar_c[1] + 1.0)*bar_c_g(2,j);
+
+                ret(7,j) =
+                    (16.0/3.0) * bar_c[1] * (24.0*bar_c[2]*bar_c[2] -12.0*bar_c[2] + 1.0)*bar_c_g(2,j)
+                    +(16.0/3.0) * bar_c[2] * (8.0*bar_c[2]*bar_c[2] -6.0*bar_c[2] + 1.0)*bar_c_g(1,j);
+
+                ret(8,j) =
+                    (16.0/3.0) * bar_c[2] * (24.0*bar_c[0]*bar_c[0] -12.0*bar_c[0] + 1.0)*bar_c_g(0,j)
+                    +(16.0/3.0) * bar_c[0] * (8.0*bar_c[0]*bar_c[0] -6.0*bar_c[0] + 1.0)*bar_c_g(2,j);
+
+                ret(9,j) =
+                    (16.0/3.0) * bar_c[0] * (24.0*bar_c[2]*bar_c[2] -12.0*bar_c[2] + 1.0)*bar_c_g(2,j)
+                    +(16.0/3.0) * bar_c[2] * (8.0*bar_c[2]*bar_c[2] -6.0*bar_c[2] + 1.0)*bar_c_g(0,j);
+
+                ret(10,j) =
+                    (16.0/3.0) * bar_c[1] * (24.0*bar_c[0]*bar_c[0] -12.0*bar_c[0] + 1.0)*bar_c_g(0,j)
+                    +(16.0/3.0) * bar_c[0] * (8.0*bar_c[0]*bar_c[0] -6.0*bar_c[0] + 1.0)*bar_c_g(1,j);
+
+                ret(11,j) =
+                    (16.0/3.0) * bar_c[0] * (24.0*bar_c[1]*bar_c[1] -12.0*bar_c[1] + 1.0)*bar_c_g(1,j)
+                    +(16.0/3.0) * bar_c[1] * (8.0*bar_c[1]*bar_c[1] -6.0*bar_c[1] + 1.0)*bar_c_g(0,j);
+            }
+            // 12-14 : others (0012,0112,0122)
+            for(size_t j = 0; j < 2; j++)
+            {
+                ret(12,j) = 32.0*(4.0*bar_c[0]-1.0)
+                    *(bar_c[0]*bar_c[1]*bar_c_g(2,j)
+                      + bar_c[1]*bar_c[2]*bar_c_g(0,j) + bar_c[2]*bar_c[0]*bar_c_g(1,j))
+                    + 128.0 * bar_c[0]*bar_c[1]*bar_c[2]*bar_c_g(0,j);
+
+                ret(13,j) = 32.0*(4.0*bar_c[1]-1.0)
+                    *(bar_c[0]*bar_c[1]*bar_c_g(2,j)
+                      + bar_c[1]*bar_c[2]*bar_c_g(0,j) + bar_c[2]*bar_c[0]*bar_c_g(1,j))
+                    + 128.0 * bar_c[0]*bar_c[1]*bar_c[2]*bar_c_g(1,j);
+
+                ret(14,j) = 32.0*(4.0*bar_c[2]-1.0)
+                    *(bar_c[0]*bar_c[1]*bar_c_g(2,j)
+                      + bar_c[1]*bar_c[2]*bar_c_g(0,j) + bar_c[2]*bar_c[0]*bar_c_g(1,j))
+                    + 128.0 * bar_c[0]*bar_c[1]*bar_c[2]*bar_c_g(2,j);
+            }
+        }
         return ret;
     }
 
@@ -271,8 +369,8 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::f
   public:
     Lagrange_scalar_basis(const mesh_type& msh, const face_type& fc, size_t degree)
     {
-        if( degree > 2 )
-            throw std::invalid_argument("degree > 2 not yet supported");
+        if( degree > 3 )
+            throw std::invalid_argument("degree > 3 not yet supported");
         basis_degree = degree;
         basis_size   = degree + 1;
 
@@ -300,11 +398,18 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::f
             ret(0) = - pos + 1.0; // 0
             ret(1) = pos;         // 1
         }
-        else // degree == 2
+        else if(basis_degree == 2)
         {
             ret(0) = 2.0*pos*pos - 3.0*pos + 1.0; // 0
             ret(1) = -4.0*pos*pos + 4.0*pos;      // 0.5
             ret(2) = 2.0*pos*pos - pos;           // 1
+        }
+        else  // degree == 3
+        {
+            ret(0) = -0.5*(3*pos-1)*(3*pos-2)*(pos-1); // 0
+            ret(1) = 4.5*pos*(3*pos-2)*(pos-1);        // 1/3
+            ret(2) = -4.5*pos*(3*pos-1)*(pos-1);       // 2/3
+            ret(3) = 0.5*pos*(3*pos-1)*(3*pos-2);      // 1
         }
         return ret;
     }
@@ -2112,7 +2217,7 @@ int main(void)
     using T = double;
 
     // degree of the polynomials on the faces
-    size_t degree = 2;
+    size_t degree = 3;
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
     
