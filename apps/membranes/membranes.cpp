@@ -1546,7 +1546,7 @@ public:
             }
         }
 
-        for (size_t i = 0; i < rhs.rows(); i++)
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
         {
             if (!asm_map[i].assemble())
                 continue;
