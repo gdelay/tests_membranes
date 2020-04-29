@@ -1256,7 +1256,7 @@ make_membrane_SC(const Mesh&                                                    
 //////////// MEMBRANE_STATIC_DECONDENSATION
 template<typename Mesh, typename T>
 Eigen::Matrix<T, Eigen::Dynamic, 1>
-membrane_static_decondensation(const Mesh&                                                      msh,
+membrane_static_decondensation_multF(const Mesh&                                                      msh,
                                const typename Mesh::cell_type&                                  cl,
                                const hho_degree_info&                                           hdi,
                                const typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>& lhs,
@@ -1319,10 +1319,75 @@ membrane_static_decondensation(const Mesh&                                      
     return ret;
 }
 
+
+
+template<typename Mesh, typename T>
+Eigen::Matrix<T, Eigen::Dynamic, 1>
+membrane_static_decondensation(const Mesh&                                                      msh,
+                               const typename Mesh::cell_type&                                  cl,
+                               const hho_degree_info&                                           hdi,
+                               const typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>& lhs,
+                               const typename Eigen::Matrix<T, Eigen::Dynamic, 1>&              rhs,
+                               const typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>& D,
+                               const typename Eigen::Matrix<T, Eigen::Dynamic, 1>&              solF)
+{
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    using vector_type = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+
+    const auto facdeg         = hdi.face_degree();
+    const auto celdeg         = hdi.cell_degree();
+    const auto num_face_dofs  = scalar_basis_size(facdeg, Mesh::dimension - 1);
+    const auto num_cell_dofs  = scalar_basis_size(celdeg, Mesh::dimension);
+    const auto fcs            = faces(msh, cl);
+    const auto num_faces      = fcs.size();
+    const auto num_faces_dofs = num_faces * num_face_dofs;
+    const auto num_total_dofs = num_cell_dofs + num_faces_dofs;
+
+    assert(lhs.rows() == lhs.cols());
+    assert(lhs.cols() == num_total_dofs);
+
+    if ((rhs.size() < num_cell_dofs))
+    {
+        throw std::invalid_argument("static condensation: incorrect size of the rhs");
+    }
+
+    const matrix_type K_TT = lhs.topLeftCorner(num_cell_dofs, num_cell_dofs);
+    const matrix_type K_TF = lhs.topRightCorner(num_cell_dofs, num_faces_dofs);
+
+    const matrix_type C_TT = D.topLeftCorner(num_cell_dofs, num_cell_dofs);
+    const matrix_type D_TT = D.topRightCorner(num_cell_dofs, num_cell_dofs);
+
+    vector_type uF = solF.head(num_faces_dofs);
+
+    const auto K_TT_ldlt = K_TT.ldlt();
+    if (K_TT_ldlt.info() != Eigen::Success)
+    {
+        throw std::invalid_argument("static condensation: K_TT is not positive definite");
+    }
+
+    const auto ID = matrix_type::Identity(num_cell_dofs, num_cell_dofs);
+    const auto K_TT_inv = K_TT_ldlt.solve(ID);
+
+    const auto E_inv = (C_TT * K_TT_inv + D_TT).inverse();
+    const matrix_type E2 = E_inv * C_TT;
+
+    const vector_type solT = K_TT_ldlt.solve(rhs.head(num_cell_dofs) - K_TF * uF)
+        - K_TT_inv * E2 * K_TT_ldlt.solve(rhs.head(num_cell_dofs) - K_TF * uF);
+
+    const vector_type multT = - E2 * K_TT.ldlt().solve(rhs.head(num_cell_dofs) - K_TF * uF);
+
+    vector_type ret          = vector_type::Zero(num_total_dofs + num_cell_dofs);
+    ret.head(num_cell_dofs)  = solT;
+    ret.block(num_cell_dofs, 0, num_faces_dofs, 1) = uF;
+    ret.block(num_total_dofs, 0, num_cell_dofs, 1) = multT;
+
+    return ret;
+}
+
 ////////////////////////////////////////
 
 template<typename Mesh>
-class membrane_condensed_assembler
+class membrane_condensed_assembler_multF
 {
     using T = typename Mesh::coordinate_type;
     typedef disk::BoundaryConditions<Mesh, true> boundary_type;
@@ -1375,7 +1440,7 @@ public:
     SparseMatrix<T> LHS;
     vector_type     RHS;
 
-    membrane_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+    membrane_condensed_assembler_multF(const Mesh& msh, hho_degree_info hdi)
         : di(hdi), use_bnd(false)
     {
         auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
@@ -1440,7 +1505,7 @@ public:
                      const Function&                 dirichlet_bf)
     {
         if(use_bnd)
-            throw std::invalid_argument("membrane_condensed_assembler: you have to use boundary type");
+            throw std::invalid_argument("membrane_condensed_assembler_multF: you have to use boundary type");
 
         auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
             return msh.is_boundary(fc);
@@ -1463,14 +1528,13 @@ public:
                 D(i,cbs + i) = 1.0;
         }
 
-        auto loc_sol = membrane_static_decondensation(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
+        auto loc_sol = membrane_static_decondensation_multF(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
 
         vector_type solT = loc_sol.head(cbs);
         vector_type multT = loc_sol.block(cbs + fcs.size() * fbs, 0, cbs, 1);
 
 
         D = matrix_type::Zero(cbs, 2*cbs);
-        auto pts2 = points(msh, cl);
         for(size_t i = 0; i < cbs; i++)
         {
             auto sol_u    = solT(i);
@@ -1730,6 +1794,489 @@ public:
 
             auto solF = get_solF(msh, cl, sol, dirichlet_bf);
 
+            auto loc_sol = membrane_static_decondensation_multF(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
+
+            const auto fcs = faces(msh, cl);
+            vector_type solT = loc_sol.head(cbs);
+            vector_type multT = loc_sol.block(cbs + fcs.size() * fbs, 0, cbs, 1);
+
+            for(size_t i = 0; i < cbs; i++)
+            {
+                auto sol_u    = solT(i);
+                auto sol_mult = multT(i);
+
+                if(sol_u < -TOL || sol_mult < -TOL)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+
+
+    template<typename Function>
+    vector_type
+    take_u(const Mesh& msh, const typename Mesh::cell_type& cl,
+    const vector_type& solution, const Function& dirichlet_bf)
+    {
+        auto solF = get_solF(msh, cl, solution, dirichlet_bf);
+
+        auto cell_offset        = offset(msh, cl);
+        auto celdeg = di.cell_degree();
+        auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
+
+        matrix_type D = matrix_type::Zero(cbs, 2*cbs);
+
+        for(size_t i = 0; i < cbs; i++)
+        {
+            auto OFF = cell_offset * cbs;
+            if( active_constr.at(OFF + i) )
+                D(i,i) = 1.0;
+            else
+                D(i,cbs + i) = 1.0;
+        }
+
+        auto facdeg = di.face_degree();
+        auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        auto num_faces = howmany_faces(msh, cl);
+
+        vector_type full_sol = membrane_static_decondensation_multF(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
+
+        return full_sol.head(cbs + num_faces * fbs);
+    }
+
+    template<typename Function>
+    vector_type
+    take_mult(const Mesh& msh, const typename Mesh::cell_type& cl,
+              const vector_type& solution, const Function& dirichlet_bf)
+    {
+        auto solF = get_solF(msh, cl, solution, dirichlet_bf);
+
+        auto cell_offset        = offset(msh, cl);
+        auto celdeg = di.cell_degree();
+        auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
+        const auto cb = make_scalar_Lagrange_basis(msh, cl, celdeg);
+
+        matrix_type D = matrix_type::Zero(cbs, 2*cbs);
+
+        for(size_t i = 0; i < cbs; i++)
+        {
+            auto OFF = cell_offset * cbs;
+            if( active_constr.at(OFF + i) )
+                D(i,i) = 1.0;
+            else
+                D(i,cbs + i) = 1.0;
+        }
+
+        auto full_sol = membrane_static_decondensation_multF(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
+
+        auto facdeg = di.face_degree();
+        auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        auto num_faces = howmany_faces(msh, cl);
+
+        // multT in the primal base
+        auto multT_dual = full_sol.tail(cbs + num_faces * fbs).head(cbs);
+        auto mass_matrixT = make_mass_matrix(msh, cl, cb);
+        vector_type multT_primal = mass_matrixT.ldlt().solve(multT_dual);
+
+        // multF in the primal base
+        vector_type multF_primal = vector_type::Zero(num_faces*fbs);
+        const auto fcs = faces(msh, cl);
+        for(size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            const auto fc = fcs[face_i];
+            const auto fb = make_scalar_Lagrange_basis(msh, fc, facdeg);
+
+            auto multF_dual = full_sol.tail(num_faces * fbs).block(face_i*fbs,0,fbs,1);
+            auto mass_matrixF = make_mass_matrix(msh, fc, fb);
+            multF_primal.block(face_i*fbs,0,fbs,1) = mass_matrixF.ldlt().solve(multF_dual);
+        }
+
+        vector_type ret = vector_type::Zero(cbs + num_faces*fbs);
+        ret.head(cbs) = multT_primal;
+        ret.tail(num_faces * fbs) = multF_primal;
+        return ret;
+    }
+
+    void finalize(void)
+    {
+        LHS.setFromTriplets( triplets.begin(), triplets.end() );
+        triplets.clear();
+
+        dump_sparse_matrix(LHS, "diff.dat");
+    }
+
+    size_t num_assembled_faces() const
+    {
+        return num_other_faces;
+    }
+
+};
+template<typename Mesh>
+auto make_condensed_assembler_Lag_multF(const Mesh& msh, hho_degree_info hdi)
+{
+    return membrane_condensed_assembler_multF<Mesh>(msh, hdi);
+}
+
+
+///////////////////////  ASSEMBLER WITHOUT MULT ON FACES  ////////////////////////
+
+template<typename Mesh>
+class membrane_condensed_assembler
+{
+    using T = typename Mesh::coordinate_type;
+    typedef disk::BoundaryConditions<Mesh, true> boundary_type;
+
+    std::vector<size_t>     compress_table;
+    std::vector<size_t>     expand_table;
+    hho_degree_info         di;
+    std::vector<Triplet<T>> triplets;
+    bool                    use_bnd;
+    std::vector< Matrix<T, Dynamic, Dynamic> > loc_LHS;
+    std::vector< Matrix<T, Dynamic, 1> >       loc_RHS;
+    std::vector< bool >     active_constr;
+
+    size_t num_all_faces, num_dirichlet_faces, num_other_faces, system_size;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    SparseMatrix<T> LHS;
+    vector_type     RHS;
+
+    membrane_condensed_assembler(const Mesh& msh, hho_degree_info hdi)
+        : di(hdi), use_bnd(false)
+    {
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return msh.is_boundary(fc);
+        };
+
+        num_all_faces       = msh.faces_size();
+        num_dirichlet_faces = std::count_if(msh.faces_begin(), msh.faces_end(), is_dirichlet);
+        num_other_faces     = num_all_faces - num_dirichlet_faces;
+
+        compress_table.resize( num_all_faces );
+        expand_table.resize( num_other_faces );
+
+        size_t compressed_offset = 0;
+        for (size_t i = 0; i < num_all_faces; i++)
+        {
+            const auto fc = *std::next(msh.faces_begin(), i);
+            if (!is_dirichlet(fc))
+            {
+                compress_table.at(i)               = compressed_offset;
+                expand_table.at(compressed_offset) = i;
+                compressed_offset++;
+            }
+        }
+
+        auto num_cells = msh.cells_size();
+        loc_LHS.resize( num_cells );
+        loc_RHS.resize( num_cells );
+
+        const auto fbs = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
+        system_size = fbs * num_other_faces;
+
+        active_constr.resize(num_cells * cbs);
+
+        LHS = SparseMatrix<T>(system_size, system_size);
+        RHS = vector_type::Zero(system_size);
+    }
+
+    void
+    set_loc_mat(const Mesh&                     msh,
+                const typename Mesh::cell_type& cl,
+                const matrix_type&              lhs,
+                const vector_type&              rhs)
+    {
+        auto cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        for(size_t i = cell_offset * cbs; i < cell_offset * cbs + cbs; i++)
+            active_constr.at(i) = false;
+    }
+
+    template<typename Function>
+    void
+    assemble_contrib(const Mesh&                     msh,
+                     const typename Mesh::cell_type& cl,
+                     const matrix_type&              lhs,
+                     const vector_type&              rhs,
+                     const vector_type&              solF,
+                     const Function&                 dirichlet_bf)
+    {
+        if(use_bnd)
+            throw std::invalid_argument("membrane_condensed_assembler: you have to use boundary type");
+
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return msh.is_boundary(fc);
+        };
+
+        auto cell_offset = offset(msh, cl);
+
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        const auto fcs = faces(msh, cl);
+
+        matrix_type D = matrix_type::Zero(cbs, 2*cbs);
+
+        for(size_t i = 0; i < cbs; i++)
+        {
+            auto OFF = cell_offset * cbs;
+            if( active_constr.at(OFF + i) )
+                D(i,i) = 1.0;
+            else
+                D(i,cbs + i) = 1.0;
+        }
+
+        auto loc_sol = membrane_static_decondensation(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
+
+        vector_type solT = loc_sol.head(cbs);
+        vector_type multT = loc_sol.block(cbs + fcs.size() * fbs, 0, cbs, 1);
+
+
+        D = matrix_type::Zero(cbs, 2*cbs);
+
+        for(size_t i = 0; i < cbs; i++)
+        {
+            auto sol_u    = solT(i);
+            auto sol_mult = multT(i);
+
+            if(sol_u <= 0.0 && sol_mult >= 0)
+            {
+                active_constr.at(cell_offset * cbs + i) = true;
+                D(i,i) = 1.0;
+            }
+            else if(sol_u >= 0.0 && sol_mult <= 0)
+            {
+                active_constr.at(cell_offset * cbs + i) = false;
+                D(i,cbs + i) = 1.0;
+            }
+            else if(sol_u * sol_mult > 0.0)
+            {
+                // this case is considered because of the error made during SC
+                if(sol_u < sol_mult)
+                {
+                    active_constr.at(cell_offset * cbs + i) = true;
+                    D(i,i) = 1.0;
+                }
+                else
+                {
+                    active_constr.at(cell_offset * cbs + i) = false;
+                    D(i,cbs + i) = 1.0;
+                }
+            }
+            else
+                throw std::logic_error("we should not arrive here !!");
+        }
+
+        auto SC = make_membrane_SC(msh, cl, di, lhs, rhs, D);
+        matrix_type lhs_sc = SC.first;
+        vector_type rhs_sc = SC.second;
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(fcs.size() * fbs);
+
+        vector_type dirichlet_data = vector_type::Zero(fcs.size()*fbs);
+
+        for (size_t face_i = 0; face_i < fcs.size(); face_i++)
+        {
+            const auto fc              = fcs[face_i];
+            const auto face_offset     = priv::offset(msh, fc);
+            const auto face_LHS_offset = compress_table.at(face_offset) * fbs;
+
+            const bool dirichlet = is_dirichlet(fc);
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                auto fb = make_scalar_Lagrange_basis(msh, fc, di.face_degree());
+                dirichlet_data.block(face_i * fbs, 0, fbs, 1) =
+                  project_function(msh, fc, fb, dirichlet_bf, di.face_degree());
+            }
+        }
+
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+                else
+                    RHS(asm_map[i]) -= lhs_sc(i,j) * dirichlet_data(j);
+            }
+        }
+
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+            RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble_contrib()
+
+
+    // init : set no contact constraint and assemble matrix
+    // (matrix for the first iteration)
+    template<typename Function>
+    void
+    init(const Mesh&                     msh,
+         const Function&                 dirichlet_bf)
+    {
+        const auto facdeg  = di.face_degree();
+        const auto fbs = scalar_basis_size(facdeg, Mesh::dimension - 1);
+
+        // assemble all local contributions for Laplacian part
+        for (auto& cl : msh)
+        {
+            // init solution with no contact
+            auto num_faces = howmany_faces(msh, cl);
+            auto num_dofs = num_faces * fbs;
+            auto cell_offset = offset(msh, cl);
+
+            vector_type solF = vector_type::Zero(num_dofs);
+            for(size_t i=0; i<num_dofs; i++)
+                solF(i) = 1.0;
+
+            assemble_contrib(msh, cl, loc_LHS.at(cell_offset), loc_RHS.at(cell_offset),solF, dirichlet_bf);
+        }
+
+        // end assembly
+        finalize();
+    }
+
+
+    template<typename Function>
+    vector_type
+    get_solF(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const vector_type& solution, const Function& dirichlet_bf)
+    {
+        auto facdeg = di.face_degree();
+        auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+
+        auto num_faces = fcs.size();
+
+        vector_type ret = vector_type::Zero(num_faces*fbs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+                return msh.is_boundary(fc);
+            };
+
+            bool dirichlet = is_dirichlet(fc);
+
+            if (dirichlet)
+            {
+                auto fb = make_scalar_Lagrange_basis(msh, fc, di.face_degree());
+
+                matrix_type mass = make_mass_matrix(msh, fc, fb, di.face_degree());
+                vector_type rhs = make_rhs(msh, fc, fb, dirichlet_bf, di.face_degree());
+                ret.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+            }
+            else
+            {
+                auto face_offset = priv::offset(msh, fc);
+                auto face_SOL_offset = compress_table.at(face_offset)*fbs;
+                ret.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        return ret;
+    }
+
+    // update_mat : assemble matrix according to the previous iteration solution
+    template<typename Function>
+    void
+    update_mat(const Mesh&                     msh,
+               const vector_type&              prev_sol,
+               const Function&                 dirichlet_bf)
+    {
+        // clear RHS
+        RHS = vector_type::Zero(system_size);
+
+        // assemble all local contributions for Laplacian part
+        for (auto& cl : msh)
+        {
+            auto solF = get_solF(msh, cl, prev_sol, dirichlet_bf);
+
+            auto cell_offset = offset(msh, cl);
+            assemble_contrib(msh, cl, loc_LHS.at(cell_offset), loc_RHS.at(cell_offset),solF, dirichlet_bf);
+        }
+
+        finalize();
+    }
+
+    template<typename Function>
+    bool
+    stop(const Mesh&         msh,
+         const vector_type&  sol, const Function& dirichlet_bf)
+    {
+        T TOL = 1e-16;
+
+        const auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(di.cell_degree(), Mesh::dimension);
+
+        // test the cells
+        for (auto& cl : msh)
+        {
+            auto cell_offset = offset(msh, cl);
+            matrix_type D = matrix_type::Zero(cbs, 2*cbs);
+            for(size_t i = 0; i < cbs; i++)
+            {
+                auto OFF = cell_offset * cbs;
+                if( active_constr.at(OFF + i) )
+                    D(i,i) = 1.0;
+                else
+                    D(i,cbs + i) = 1.0;
+            }
+
+            auto solF = get_solF(msh, cl, sol, dirichlet_bf);
+
             auto loc_sol = membrane_static_decondensation(msh, cl, di, loc_LHS.at( cell_offset ), loc_RHS.at( cell_offset ), D, solF);
 
             const auto fcs = faces(msh, cl);
@@ -1811,28 +2358,11 @@ public:
         auto fbs = scalar_basis_size(di.face_degree(), Mesh::dimension-1);
         auto num_faces = howmany_faces(msh, cl);
 
-        // multT in the primal base
-        auto multT_dual = full_sol.tail(cbs + num_faces * fbs).head(cbs);
+        auto multT_dual = full_sol.tail(cbs);
         auto mass_matrixT = make_mass_matrix(msh, cl, cb);
         vector_type multT_primal = mass_matrixT.ldlt().solve(multT_dual);
 
-        // multF in the primal base
-        vector_type multF_primal = vector_type::Zero(num_faces*fbs);
-        const auto fcs = faces(msh, cl);
-        for(size_t face_i = 0; face_i < num_faces; face_i++)
-        {
-            const auto fc = fcs[face_i];
-            const auto fb = make_scalar_Lagrange_basis(msh, fc, facdeg);
-
-            auto multF_dual = full_sol.tail(num_faces * fbs).block(face_i*fbs,0,fbs,1);
-            auto mass_matrixF = make_mass_matrix(msh, fc, fb);
-            multF_primal.block(face_i*fbs,0,fbs,1) = mass_matrixF.ldlt().solve(multF_dual);
-        }
-
-        vector_type ret = vector_type::Zero(cbs + num_faces*fbs);
-        ret.head(cbs) = multT_primal;
-        ret.tail(num_faces * fbs) = multF_primal;
-        return ret;
+        return multT_primal;
     }
 
     void finalize(void)
@@ -2036,6 +2566,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     };
 #endif
 
+    // auto assembler_sc = make_condensed_assembler_Lag_multF(msh, hdi);
     auto assembler_sc = make_condensed_assembler_Lag(msh, hdi);
     auto assembler = make_assembler_Lag(msh, hdi);
 
@@ -2043,7 +2574,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     for (auto& cl : msh)
     {
-        auto cb = make_scalar_Lagrange_basis(msh, cl, hdi.cell_degree());
+        auto cb     = make_scalar_Lagrange_basis(msh, cl, hdi.cell_degree());
         auto gr     = make_vector_hho_gradrec_Lag(msh, cl, hdi);
         auto stab   = make_scalar_hdg_stabilization_Lag(msh, cl, hdi);
         auto rhs    = make_rhs(msh, cl, cb, rhs_fun);
@@ -2055,6 +2586,13 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             assembler.set_loc_mat(msh, cl, A, rhs);
         }
     }
+
+
+    if(scond)
+        std::cout << green << "end assembly : nb dof = " << assembler_sc.RHS.size() << std::endl;
+    else
+        std::cout << green << "end assembly : nb dof = " << assembler.RHS.size() << std::endl;
+
 
     size_t systsz, nnz;
     dynamic_vector<T> sol;
@@ -2136,8 +2674,6 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             mult_sol = assembler.take_mult(msh, cl, sol);
         }
 
-        auto diff = realsol - fullsol.head( cb.size() );
-
         auto cell_dofs = fullsol.head( cb.size() );
         auto mult_cell_dofs = mult_sol.head( cb.size() );
 
@@ -2184,7 +2720,6 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         {
             const auto fc = fcs[face_i];
             auto face_sol = fullsol.block(cbs+face_i*fbs, 0, fbs, 1);
-            auto face_mult = mult_sol.block(cbs+face_i*fbs, 0, fbs, 1);
 
             const auto fb = make_scalar_Lagrange_basis(msh, fc, hdi.face_degree());
             auto barF = barycenter(msh, fc);
@@ -2192,8 +2727,12 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             T solbarF = fb.eval_functions(barF).dot(face_sol);
             uF_gp->add_data( barF, solbarF );
 
-            T multbarF = fb.eval_functions(barF).dot(face_mult);
-            multF_gp->add_data( barF, multbarF );
+            if( mult_sol.size() > cbs )
+            {
+                auto face_mult = mult_sol.block(cbs+face_i*fbs, 0, fbs, 1);
+                T multbarF = fb.eval_functions(barF).dot(face_mult);
+                multF_gp->add_data( barF, multbarF );
+            }
         }
     }
 
@@ -2217,7 +2756,7 @@ int main(void)
     using T = double;
 
     // degree of the polynomials on the faces
-    size_t degree = 3;
+    size_t degree = 1;
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
     
