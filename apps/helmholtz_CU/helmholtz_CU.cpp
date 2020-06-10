@@ -167,14 +167,14 @@ using namespace disk;
 template<typename Mesh>
 class helmholtz_assembler
 {
+public:
+
     using T = typename Mesh::coordinate_type;
-    typedef disk::BoundaryConditions<Mesh, true> boundary_type;
 
     std::vector<size_t>     compress_table;
     std::vector<size_t>     expand_table;
     hho_degree_info         di;
     std::vector<Triplet<T>> triplets;
-    bool                    use_bnd;
 
     size_t num_all_faces, num_dirichlet_faces, num_other_faces, system_size;
 
@@ -208,7 +208,6 @@ class helmholtz_assembler
         }
     };
 
-public:
     typedef Matrix<T, Dynamic, Dynamic> matrix_type;
     typedef Matrix<T, Dynamic, 1>       vector_type;
 
@@ -216,7 +215,7 @@ public:
     vector_type     RHS;
 
     helmholtz_assembler(const Mesh& msh, hho_degree_info hdi)
-        : di(hdi), use_bnd(false)
+        : di(hdi)
     {
         auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
             return msh.is_boundary(fc);
@@ -260,9 +259,6 @@ public:
              const vector_type&              rhs,
              const Function&                 dirichlet_bf)
     {
-        if(use_bnd)
-            throw std::invalid_argument("helmholtz_assembler: you have to use boundary type");
-
         auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
             return msh.is_boundary(fc);
         };
@@ -396,6 +392,204 @@ auto make_helmholtz_assembler(const Mesh& msh, hho_degree_info hdi)
     return helmholtz_assembler<Mesh>(msh, hdi);
 }
 
+//////////////////  condensed assembler
+template<typename Mesh>
+class condensed_helmholtz_assembler : public helmholtz_assembler<Mesh>
+{
+    using T = typename Mesh::coordinate_type;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    std::vector< matrix_type > loc_LHS;
+    std::vector< vector_type > loc_RHS;
+
+    condensed_helmholtz_assembler(const Mesh& msh, hho_degree_info hdi)
+        : helmholtz_assembler<Mesh>(msh, hdi)
+    {
+        auto num_cells = msh.cells_size();
+        loc_LHS.resize(num_cells);
+        loc_RHS.resize(num_cells);
+
+        const auto fbs = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
+        this->system_size    = fbs * this->num_other_faces;
+
+        this->LHS = SparseMatrix<T>(this->system_size, this->system_size);
+        this->RHS = vector_type::Zero(this->system_size);
+    }
+
+
+    template<typename Function>
+    void
+    assemble(const Mesh&                     msh,
+             const typename Mesh::cell_type& cl,
+             const matrix_type&              lhs,
+             const vector_type&              rhs,
+             const Function&                 dirichlet_bf)
+    {
+        // store local LHS and RHS
+        auto cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+
+        auto sc = make_scalar_static_condensation(msh, cl, this->di, lhs, rhs);
+        auto lhs_sc = sc.first;
+        auto rhs_sc = sc.second;
+
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return msh.is_boundary(fc);
+        };
+
+        const auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        const auto fcs = faces(msh, cl);
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(fcs.size() * fbs);
+
+        vector_type dirichlet_data = vector_type::Zero(fcs.size()*fbs);
+
+        for (size_t face_i = 0; face_i < fcs.size(); face_i++)
+        {
+            const auto fc              = fcs[face_i];
+            const auto face_offset     = priv::offset(msh, fc);
+            const auto face_LHS_offset = this->compress_table.at(face_offset) * fbs;
+
+            const bool dirichlet = is_dirichlet(fc);
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+
+            if (dirichlet)
+            {
+                auto fb = make_scalar_monomial_basis(msh, fc, this->di.face_degree());
+                dirichlet_data.block(face_i * fbs, 0, fbs, 1) =
+                    project_function(msh, fc, fb, dirichlet_bf, this->di.face_degree());
+            }
+        }
+
+        // assemble LHS
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    this->triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+                else
+                    this->RHS(asm_map[i]) -= lhs_sc(i,j) * dirichlet_data(j);
+            }
+        }
+
+        // assemble RHS
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+            this->RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble()
+
+    template<typename Function>
+    vector_type
+    take_u(const Mesh& msh, const typename Mesh::cell_type& cl,
+    const vector_type& solution, const Function& dirichlet_bf)
+    {
+        auto facdeg = this->di.face_degree();
+        auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+
+        auto num_faces = fcs.size();
+
+        vector_type face_sol = vector_type::Zero(num_faces*fbs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+                return msh.is_boundary(fc);
+            };
+
+            bool dirichlet = is_dirichlet(fc);
+
+            if (dirichlet)
+            {
+                auto fb = make_scalar_monomial_basis(msh, fc, this->di.face_degree());
+
+                matrix_type mass = make_mass_matrix(msh, fc, fb, this->di.face_degree());
+                vector_type rhs = make_rhs(msh, fc, fb, dirichlet_bf, this->di.face_degree());
+                face_sol.block(face_i*fbs, 0, fbs, 1) = mass.ldlt().solve(rhs);
+            }
+            else
+            {
+                auto face_offset = priv::offset(msh, fc);
+                auto face_SOL_offset = this->compress_table.at(face_offset)*fbs;
+                face_sol.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+
+        auto cell_offset = offset(msh, cl);
+
+        return make_scalar_static_decondensation(msh, cl, this->di, loc_LHS[cell_offset], loc_RHS[cell_offset], face_sol);
+    }
+
+    void finalize(void)
+    {
+        this->LHS.setFromTriplets( this->triplets.begin(), this->triplets.end() );
+        this->triplets.clear();
+
+        dump_sparse_matrix(this->LHS, "diff.dat");
+    }
+
+    size_t num_assembled_faces() const
+    {
+        return this->num_other_faces;
+    }
+
+};
+
+
+template<typename Mesh>
+auto make_condensed_helmholtz_assembler(const Mesh& msh, hho_degree_info hdi)
+{
+    return condensed_helmholtz_assembler<Mesh>(msh, hdi);
+}
 
 
 /////////////////////////////////////////////////////////////////
@@ -607,7 +801,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto sol_grad = make_grad_function(msh);
 
     auto assembler = make_helmholtz_assembler(msh, hdi);
-    auto assembler_sc = make_helmholtz_assembler(msh, hdi);
+    auto assembler_sc = make_condensed_helmholtz_assembler(msh, hdi);
 
 
     bool scond = true;
@@ -643,6 +837,8 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         systsz = assembler.LHS.rows();
         nnz = assembler.LHS.nonZeros();
     }
+
+    std::cout << "system size = " << systsz << std::endl;
 
     dynamic_vector<T> sol = dynamic_vector<T>::Zero(systsz);
 
