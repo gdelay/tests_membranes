@@ -496,12 +496,12 @@ std::vector< disk::cartesian_mesh<T, 2> >
 get_cartesian_2d_diskpp_meshes(void)
 {
     std::vector<std::string> meshfiles;
-    //meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-2-2.quad");
+    meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-2-2.quad");
     meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-4-4.quad");
     meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-8-8.quad");
     meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-16-16.quad");
     meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-32-32.quad");
-    meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-64-64.quad");
+    // meshfiles.push_back("../../../diskpp/meshes/2D_quads/diskpp/testmesh-64-64.quad");
 
     typedef disk::cartesian_mesh<T, 2>  mesh_type;
 

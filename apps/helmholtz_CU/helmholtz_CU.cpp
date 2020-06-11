@@ -134,7 +134,7 @@ struct grad_functor< Mesh<T, 3, Storage> >
 
     auto operator()(const point_type& pt) const
     {
-        Matrix<T, 1, 2> ret;
+        Matrix<T, 1, 3> ret;
         auto sin_px = std::sin(M_PI * pt.x());
         auto sin_py = std::sin(M_PI * pt.y());
         auto sin_pz = std::sin(M_PI * pt.z());
@@ -627,7 +627,9 @@ make_DGH_laplacian(const Mesh&                     msh,
     size_t loc_size = cbs + num_faces * fbs;
     matrix_type ret = matrix_type::Zero(loc_size, loc_size);
 
-    const auto qps = integrate(msh, cl, 2*celdeg - 2);
+    int intdeg = 2*celdeg - 2;
+    auto int_deg = std::max(intdeg , 0);
+    const auto qps = integrate(msh, cl, int_deg);
     for (auto& qp : qps)
     {
         const auto grad_phi = cb.eval_gradients(qp.point());
@@ -642,7 +644,9 @@ make_DGH_laplacian(const Mesh&                     msh,
         const auto n  = normal(msh, cl, fc);
         const auto fb = make_scalar_monomial_basis(msh, fc, facdeg);
 
-        const auto qps_f = integrate(msh, fc, celdeg + facdeg - 1);
+        int intdeg = celdeg + facdeg - 1;
+        auto int_deg = std::max(intdeg,0);
+        const auto qps_f = integrate(msh, fc, int_deg);
         for (auto& qp : qps_f)
         {
             const vector_type f_phi  = fb.eval_functions(qp.point());
@@ -838,7 +842,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         nnz = assembler.LHS.nonZeros();
     }
 
-    std::cout << "system size = " << systsz << std::endl;
+    // std::cout << "system size = " << systsz << std::endl;
 
     dynamic_vector<T> sol = dynamic_vector<T>::Zero(systsz);
 
@@ -850,15 +854,16 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
 
     ///////////////////////  POST PROCESS ///////////////////
-    std::cout << "Start post-process" << std::endl;
+    // std::cout << "Start post-process" << std::endl;
+    // std::cout << "h = " << disk::average_diameter(msh) << std::endl;
 
     T u_H1_error = 0.0;
     T u_L2_error = 0.0;
 
-    postprocess_output<T>  postoutput;
+    // postprocess_output<T>  postoutput;
 
-    auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
-    auto sol_gp  = std::make_shared< gnuplot_output_object<T> >("sol.dat");
+    // auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
+    // auto sol_gp  = std::make_shared< gnuplot_output_object<T> >("sol.dat");
 
     for (auto& cl : msh)
     {
@@ -883,12 +888,13 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         const auto qps = integrate(msh, cl, 2*celdeg);
         for (auto& qp : qps)
         {
+            const auto dim = Mesh::dimension;
             auto grad_ref = sol_grad( qp.point() );
             auto t_dphi = cb.eval_gradients( qp.point() );
-            Matrix<T, 1, 2> grad = Matrix<T, 1, 2>::Zero();
+            Matrix<T, 1, dim> grad = Matrix<T, 1, dim>::Zero();
 
             for (size_t i = 0; i < cbs; i++ )
-                grad += cell_dofs(i) * t_dphi.block(i, 0, 1, 2);
+                grad += cell_dofs(i) * t_dphi.block(i, 0, 1, dim);
 
             // H1-error
             u_H1_error += qp.weight() * (grad_ref - grad).dot(grad_ref - grad);
@@ -899,23 +905,23 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             u_L2_error += qp.weight() * (sol_fun(qp.point()) - v) * (sol_fun(qp.point()) - v);
         }
 
-        // gnuplot output for cells
-        auto pts = points(msh, cl);
-        for(size_t i=0; i < pts.size(); i++)
-        {
-            T sol_uT = cell_dofs.dot( cb.eval_functions( pts[i] ) );
-            uT_gp->add_data( pts[i], sol_uT );
-            sol_gp->add_data( pts[i], sol_fun(pts[i]) );
-        }
+        // // gnuplot output for cells
+        // auto pts = points(msh, cl);
+        // for(size_t i=0; i < pts.size(); i++)
+        // {
+        //     T sol_uT = cell_dofs.dot( cb.eval_functions( pts[i] ) );
+        //     uT_gp->add_data( pts[i], sol_uT );
+        //     sol_gp->add_data( pts[i], sol_fun(pts[i]) );
+        // }
     }
 
-    postoutput.add_object(uT_gp);
-    postoutput.add_object(sol_gp);
-    postoutput.write();
+    // postoutput.add_object(uT_gp);
+    // postoutput.add_object(sol_gp);
+    // postoutput.write();
 
-    std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
-    std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
-    std::cout << nocolor;
+    // std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
+    // std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
+    // std::cout << nocolor;
 
     return std::sqrt(u_H1_error);
 }
@@ -934,7 +940,7 @@ struct test_functor
     size_t
     expected_rate(size_t k)
     {
-        return k+1;
+        return k;
     }
 };
 
@@ -947,7 +953,7 @@ run_diffusion_solver(const Mesh& msh)
 }
 
 
-#if 0
+#if 1
 int main(void)
 {
     tester<test_functor> tstr;
@@ -957,7 +963,7 @@ int main(void)
 #endif
 
 
-#if 1
+#if 0
 int main(void)
 {
     using T = double;
@@ -966,6 +972,7 @@ int main(void)
     size_t degree = 1;
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
+    // typedef disk::simplicial_mesh<T, 3>  mesh_type;
     
     
     if(1)
@@ -983,6 +990,7 @@ int main(void)
         {
             mesh_type msh;
             disk::fvca5_mesh_loader<T, 2> loader;
+            // disk::netgen_mesh_loader<T, 3> loader;
             if (!loader.read_mesh(meshfiles.at(i)) )
             {
                 std::cout << "Problem loading mesh." << std::endl;
@@ -996,7 +1004,9 @@ int main(void)
     {
         mesh_type msh;
         disk::fvca5_mesh_loader<T, 2> loader;
+        // disk::netgen_mesh_loader<T, 3> loader;
         std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1";
+        // std::string mesh_filename = "../../../diskpp/meshes/3D_tetras/netgen/cube4.mesh";
         if (!loader.read_mesh(mesh_filename) )
         {
             std::cout << "Problem loading mesh." << std::endl;
