@@ -14,6 +14,7 @@
 #include "solvers/solver.hpp"
 
 #include "../tests/common.hpp"
+#include "output/silo.hpp"
 
 /***************************************************************************/
 /* RHS definition */
@@ -156,6 +157,104 @@ auto make_grad_function(const Mesh& msh)
     return grad_functor<Mesh>();
 }
 
+/***************************************************************************/
+/* domain varpi function */
+
+template<typename Mesh>
+struct varpi_functor;
+
+template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+struct varpi_functor< Mesh<T, 2, Storage> >
+{
+    typedef Mesh<T,2,Storage>               mesh_type;
+    typedef typename mesh_type::coordinate_type scalar_type;
+    typedef typename mesh_type::point_type  point_type;
+
+    scalar_type operator()(const point_type& pt) const
+    {
+        scalar_type ret;
+
+        if( (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
+            ret = 0.0;
+        else
+            ret = 1.0;
+
+        return ret;
+    }
+};
+
+// template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+// struct varpi_functor< Mesh<T, 3, Storage> >
+// {
+//     typedef Mesh<T,3,Storage>               mesh_type;
+//     typedef typename mesh_type::coordinate_type scalar_type;
+//     typedef typename mesh_type::point_type  point_type;
+
+//     scalar_type operator()(const point_type& pt) const
+//     {
+//         scalar_type ret;
+//         return ret;
+//     }
+// };
+
+template<typename Mesh>
+auto make_varpi_function(const Mesh& msh)
+{
+    return varpi_functor<Mesh>();
+}
+
+
+/***************************************************************************/
+/* domain B function */
+
+template<typename Mesh>
+struct B_functor;
+
+template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+struct B_functor< Mesh<T, 2, Storage> >
+{
+    typedef Mesh<T,2,Storage>               mesh_type;
+    typedef typename mesh_type::coordinate_type scalar_type;
+    typedef typename mesh_type::point_type  point_type;
+
+    scalar_type operator()(const point_type& pt) const
+    {
+        scalar_type ret;
+
+        if( (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
+            ret = 0.0;
+        else
+            ret = 1.0;
+
+        return ret;
+    }
+};
+
+// template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+// struct B_functor< Mesh<T, 3, Storage> >
+// {
+//     typedef Mesh<T,3,Storage>               mesh_type;
+//     typedef typename mesh_type::coordinate_type scalar_type;
+//     typedef typename mesh_type::point_type  point_type;
+
+//     scalar_type operator()(const point_type& pt) const
+//     {
+//         scalar_type ret;
+
+//         if( (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
+//             ret = 0.0;
+//         else
+//             ret = 1.0;
+
+//         return ret;
+//     }
+// };
+
+template<typename Mesh>
+auto make_B_function(const Mesh& msh)
+{
+    return B_functor<Mesh>();
+}
 
 ////////////////////////////////////////////////////////////////////////////
 ////////////////////////   ASSEMBLERS  /////////////////////////////////////
@@ -804,6 +903,10 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto sol_fun = make_solution_function(msh);
     auto sol_grad = make_grad_function(msh);
 
+
+    auto varpi_fun = make_varpi_function(msh);
+    auto B_fun = make_B_function(msh);
+
     auto assembler = make_helmholtz_assembler(msh, hdi);
     auto assembler_sc = make_condensed_helmholtz_assembler(msh, hdi);
 
@@ -923,6 +1026,24 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     // std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
     // std::cout << nocolor;
 
+
+
+    silo_database silo;
+    silo.create("helmholtz.silo");
+    silo.add_mesh(msh, "mesh");
+    std::vector<T> cell_varpi, cell_B;
+
+    for(auto& cl : msh)
+    {
+        cell_varpi.push_back( varpi_fun( barycenter(msh, cl) ) );
+        cell_B.push_back( B_fun( barycenter(msh, cl) ) );
+    }
+    silo_zonal_variable<T> silo_varpi("varpi", cell_varpi);
+    silo_zonal_variable<T> silo_B("B", cell_B);
+    silo.add_variable("mesh", silo_varpi);
+    silo.add_variable("mesh", silo_B);
+    silo.close();
+
     return std::sqrt(u_H1_error);
 }
 
@@ -953,7 +1074,7 @@ run_diffusion_solver(const Mesh& msh)
 }
 
 
-#if 1
+#if 0
 int main(void)
 {
     tester<test_functor> tstr;
@@ -963,7 +1084,7 @@ int main(void)
 #endif
 
 
-#if 0
+#if 1
 int main(void)
 {
     using T = double;
@@ -975,7 +1096,7 @@ int main(void)
     // typedef disk::simplicial_mesh<T, 3>  mesh_type;
     
     
-    if(1)
+    if(0)
     {
         std::vector<std::string> meshfiles;
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
@@ -1005,7 +1126,7 @@ int main(void)
         mesh_type msh;
         disk::fvca5_mesh_loader<T, 2> loader;
         // disk::netgen_mesh_loader<T, 3> loader;
-        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1";
+        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1";
         // std::string mesh_filename = "../../../diskpp/meshes/3D_tetras/netgen/cube4.mesh";
         if (!loader.read_mesh(mesh_filename) )
         {
