@@ -32,7 +32,7 @@ struct rhs_functor< Mesh<T, 2, Storage> >
     {
         auto sin_px = std::sin(M_PI * pt.x());
         auto sin_py = std::sin(M_PI * pt.y());
-        return 2.0 * M_PI * M_PI * sin_px * sin_py;
+        return 0.0;
     }
 };
 
@@ -70,11 +70,18 @@ struct solution_functor< Mesh<T, 2, Storage> >
     typedef typename mesh_type::coordinate_type scalar_type;
     typedef typename mesh_type::point_type  point_type;
 
+    T omega;
+
+    solution_functor< Mesh<T, 2, Storage> >(const T omega_)
+        : omega(omega_)
+        {}
+
     scalar_type operator()(const point_type& pt) const
     {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        return 1.0 + sin_px * sin_py;
+        T coeff = omega / std::sqrt(2);
+        auto cos_cx = std::cos(coeff * pt.x());
+        auto cos_cy = std::cos(coeff * pt.y());
+        return cos_cx * cos_cy;
     }
 };
 
@@ -84,6 +91,12 @@ struct solution_functor< Mesh<T, 3, Storage> >
     typedef Mesh<T,3,Storage>               mesh_type;
     typedef typename mesh_type::coordinate_type scalar_type;
     typedef typename mesh_type::point_type  point_type;
+
+    T omega;
+
+    solution_functor< Mesh<T, 3, Storage> >(const T omega_)
+        : omega(omega_)
+        {}
 
     scalar_type operator()(const point_type& pt) const
     {
@@ -95,9 +108,9 @@ struct solution_functor< Mesh<T, 3, Storage> >
 };
 
 template<typename Mesh>
-auto make_solution_function(const Mesh& msh)
+auto make_solution_function(const Mesh& msh, const typename Mesh::coordinate_type omega_)
 {
-    return solution_functor<Mesh>();
+    return solution_functor<Mesh>(omega_);
 }
 
 /***************************************************************************/
@@ -112,16 +125,23 @@ struct grad_functor< Mesh<T, 2, Storage> >
     typedef typename mesh_type::coordinate_type scalar_type;
     typedef typename mesh_type::point_type  point_type;
 
+    grad_functor< Mesh<T, 2, Storage> >(const T omega_)
+        : omega(omega_)
+        {}
+
+    T omega;
+
     auto operator()(const point_type& pt) const
     {
         Matrix<T, 1, 2> ret;
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        auto cos_px = std::cos(M_PI * pt.x());
-        auto cos_py = std::cos(M_PI * pt.y());
+        T coeff = omega / std::sqrt(2);
+        auto sin_cx = std::sin(coeff * pt.x());
+        auto sin_cy = std::sin(coeff * pt.y());
+        auto cos_cx = std::cos(coeff * pt.x());
+        auto cos_cy = std::cos(coeff * pt.y());
 
-        ret(0) = M_PI * cos_px * sin_py;
-        ret(1) = M_PI * sin_px * cos_py;
+        ret(0) = - coeff * sin_cx * cos_cy;
+        ret(1) = - coeff * cos_cx * sin_cy;
         return ret;
     }
 };
@@ -132,6 +152,12 @@ struct grad_functor< Mesh<T, 3, Storage> >
     typedef Mesh<T,3,Storage>               mesh_type;
     typedef typename mesh_type::coordinate_type scalar_type;
     typedef typename mesh_type::point_type  point_type;
+
+    T omega;
+
+    grad_functor< Mesh<T, 3, Storage> >(const T omega_)
+        : omega(omega_)
+        {}
 
     auto operator()(const point_type& pt) const
     {
@@ -152,9 +178,9 @@ struct grad_functor< Mesh<T, 3, Storage> >
 };
 
 template<typename Mesh>
-auto make_grad_function(const Mesh& msh)
+auto make_grad_function(const Mesh& msh, const typename Mesh::coordinate_type omega_)
 {
-    return grad_functor<Mesh>();
+    return grad_functor<Mesh>(omega_);
 }
 
 /***************************************************************************/
@@ -1311,14 +1337,17 @@ run_Helmholtz(const Mesh& msh, size_t degree)
 {
     using T = typename Mesh::coordinate_type;
 
+
+    T omega = 10.0;
+
     typedef Matrix<T, Dynamic, Dynamic> matrix_type;
     typedef Matrix<T, Dynamic, 1>       vector_type;
 
     hho_degree_info hdi(degree, degree);
 
     auto rhs_fun = make_rhs_function(msh);
-    auto sol_fun = make_solution_function(msh);
-    auto sol_grad = make_grad_function(msh);
+    auto sol_fun = make_solution_function(msh,omega);
+    auto sol_grad = make_grad_function(msh,omega);
 
 
     auto varpi_fun = make_varpi_function(msh);
@@ -1337,21 +1366,24 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         auto cb = make_scalar_monomial_basis(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
-        auto lap         = make_DGH_laplacian(msh, cl, hdi);
+        auto A         = make_DGH_laplacian(msh, cl, hdi);
         auto stab        = make_scalar_stabilization_UC(msh, cl, hdi);
         auto stab_star   = make_scalar_stabilization_UC_star(msh, cl, hdi);
 
-        size_t num_dofs_lap = lap.rows();
+        // helmholtz term
+        A.block(0, 0, cbs, cbs) -= omega * omega * make_mass_matrix(msh, cl, cb);
+
+        size_t num_dofs_lap = A.rows();
         size_t num_dofs = 2*num_dofs_lap;
         vector_type rhs = vector_type::Zero( 2*num_dofs_lap );
         rhs.block(num_dofs_lap, 0, cbs, 1) += make_rhs(msh, cl, cb, rhs_fun);
 
-        T gamma = 0.01;
-        T gamma_star = 0.01;
+        T gamma = 1.0;
+        T gamma_star = 1.0;
 
         matrix_type lhs = matrix_type::Zero( num_dofs, num_dofs);
-        lhs.block(0, num_dofs_lap, num_dofs_lap, num_dofs_lap) += lap.transpose();
-        lhs.block(num_dofs_lap, 0, num_dofs_lap, num_dofs_lap) += lap;
+        lhs.block(0, num_dofs_lap, num_dofs_lap, num_dofs_lap) += A.transpose();
+        lhs.block(num_dofs_lap, 0, num_dofs_lap, num_dofs_lap) += A;
         lhs.block(num_dofs_lap, num_dofs_lap, num_dofs_lap, num_dofs_lap)
             -= gamma_star * stab_star;
         lhs.block(0, 0, num_dofs_lap, num_dofs_lap) += gamma * stab;
@@ -1402,6 +1434,8 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
 
     ///////////////////////  POST PROCESS ///////////////////
+    std::cout << "h = " << disk::average_diameter(msh) << std::endl;
+
     T u_H1_error = 0.0;
     T u_L2_error = 0.0;
     T u_H1_error_B = 0.0;
@@ -1568,7 +1602,7 @@ int main(void)
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
     
 
         for(size_t i=0; i < meshfiles.size(); i++)
