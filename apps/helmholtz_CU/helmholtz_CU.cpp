@@ -74,7 +74,7 @@ struct solution_functor< Mesh<T, 2, Storage> >
     {
         auto sin_px = std::sin(M_PI * pt.x());
         auto sin_py = std::sin(M_PI * pt.y());
-        return sin_px * sin_py;
+        return 1.0 + sin_px * sin_py;
     }
 };
 
@@ -1311,6 +1311,9 @@ run_Helmholtz(const Mesh& msh, size_t degree)
 {
     using T = typename Mesh::coordinate_type;
 
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
     hho_degree_info hdi(degree, degree);
 
     auto rhs_fun = make_rhs_function(msh);
@@ -1321,24 +1324,52 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto varpi_fun = make_varpi_function(msh);
     auto B_fun = make_B_function(msh);
 
-    auto assembler = make_helmholtz_assembler(msh, hdi);
+
+    // auto assembler = make_helmholtz_assembler(msh, hdi);
+    auto assembler = make_helmholtz_UC_assembler(msh, hdi);
     auto assembler_sc = make_condensed_helmholtz_assembler(msh, hdi);
 
 
-    bool scond = true;
+    bool scond = false;
 
     for (auto& cl : msh)
     {
         auto cb = make_scalar_monomial_basis(msh, cl, hdi.cell_degree());
-        auto lap    = make_DGH_laplacian(msh, cl, hdi);
-        auto stab   = make_scalar_fool_stabilization(msh, cl, hdi);
-        auto rhs    = make_rhs(msh, cl, cb, rhs_fun);
-        T gamma = 5.0 * (degree+1) * (degree+2);
-        Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> A = lap + gamma * stab;
+        auto cbs = cb.size();
+
+        auto lap         = make_DGH_laplacian(msh, cl, hdi);
+        auto stab        = make_scalar_stabilization_UC(msh, cl, hdi);
+        auto stab_star   = make_scalar_stabilization_UC_star(msh, cl, hdi);
+
+        size_t num_dofs_lap = lap.rows();
+        size_t num_dofs = 2*num_dofs_lap;
+        vector_type rhs = vector_type::Zero( 2*num_dofs_lap );
+        rhs.block(num_dofs_lap, 0, cbs, 1) += make_rhs(msh, cl, cb, rhs_fun);
+
+        T gamma = 0.01;
+        T gamma_star = 0.01;
+
+        matrix_type lhs = matrix_type::Zero( num_dofs, num_dofs);
+        lhs.block(0, num_dofs_lap, num_dofs_lap, num_dofs_lap) += lap.transpose();
+        lhs.block(num_dofs_lap, 0, num_dofs_lap, num_dofs_lap) += lap;
+        lhs.block(num_dofs_lap, num_dofs_lap, num_dofs_lap, num_dofs_lap)
+            -= gamma_star * stab_star;
+        lhs.block(0, 0, num_dofs_lap, num_dofs_lap) += gamma * stab;
+
+        T coeff = 1.0;
+        // m_h :
+        if( varpi_fun(barycenter(msh,cl)) > 0.5)
+        {
+            // add m_h terms
+            lhs.block(0, 0, cbs, cbs) += coeff * make_mass_matrix(msh, cl, cb);
+            rhs.block(0, 0, cbs, 1)
+                += coeff * make_rhs(msh, cl, cb, sol_fun, hdi.cell_degree());
+        }
+
         if(scond)
-            assembler_sc.assemble(msh, cl, A, rhs, sol_fun);
+            assembler_sc.assemble(msh, cl, lhs, rhs, sol_fun);
         else
-            assembler.assemble(msh, cl, A, rhs, sol_fun);
+            assembler.assemble(msh, cl, lhs, rhs, sol_fun);
     }
 
     if(scond)
@@ -1371,34 +1402,38 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
 
     ///////////////////////  POST PROCESS ///////////////////
-    // std::cout << "Start post-process" << std::endl;
-    // std::cout << "h = " << disk::average_diameter(msh) << std::endl;
-
     T u_H1_error = 0.0;
     T u_L2_error = 0.0;
+    T u_H1_error_B = 0.0;
+    T u_L2_error_B = 0.0;
+    T z_L2_error = 0.0;
 
-    // postprocess_output<T>  postoutput;
+    postprocess_output<T>  postoutput;
 
-    // auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
-    // auto sol_gp  = std::make_shared< gnuplot_output_object<T> >("sol.dat");
+    auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
+    auto sol_gp  = std::make_shared< gnuplot_output_object<T> >("sol.dat");
+    auto zT_gp  = std::make_shared< gnuplot_output_object<T> >("zT.dat");
 
     for (auto& cl : msh)
     {
         auto cb  = make_scalar_monomial_basis(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
-        Eigen::Matrix<T, Eigen::Dynamic, 1> fullsol;
+        Eigen::Matrix<T, Eigen::Dynamic, 1> fullsol, dualsol;
 
         if(scond)
         {
             fullsol = assembler_sc.take_u(msh, cl, sol, sol_fun);
+
         }
         else
         {
             fullsol = assembler.take_u(msh, cl, sol, sol_fun);
+            dualsol = assembler.take_z(msh, cl, sol, sol_fun);
         }
 
         auto cell_dofs = fullsol.head( cbs );
+        auto cell_dofs_z = dualsol.head( cbs );
 
         // errors
         const auto celdeg = hdi.cell_degree();
@@ -1420,28 +1455,43 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             auto t_phi = cb.eval_functions( qp.point() );
             T v = cell_dofs.dot( t_phi );
             u_L2_error += qp.weight() * (sol_fun(qp.point()) - v) * (sol_fun(qp.point()) - v);
+
+            T z = cell_dofs_z.dot( t_phi );
+            z_L2_error += qp.weight() * z * z;
+
+            if( B_fun(barycenter(msh,cl)) > 0.5 )
+            {
+                u_H1_error_B += qp.weight() * (grad_ref - grad).dot(grad_ref - grad);
+                u_L2_error_B += qp.weight() *(sol_fun(qp.point()) - v) *(sol_fun(qp.point()) - v);
+            }
         }
 
-        // // gnuplot output for cells
-        // auto pts = points(msh, cl);
-        // for(size_t i=0; i < pts.size(); i++)
-        // {
-        //     T sol_uT = cell_dofs.dot( cb.eval_functions( pts[i] ) );
-        //     uT_gp->add_data( pts[i], sol_uT );
-        //     sol_gp->add_data( pts[i], sol_fun(pts[i]) );
-        // }
+        // gnuplot output for cells
+        auto pts = points(msh, cl);
+        for(size_t i=0; i < pts.size(); i++)
+        {
+            T sol_uT = cell_dofs.dot( cb.eval_functions( pts[i] ) );
+            uT_gp->add_data( pts[i], sol_uT );
+            sol_gp->add_data( pts[i], sol_fun(pts[i]) );
+            T zT = cell_dofs_z.dot( cb.eval_functions( pts[i] ) );
+            zT_gp->add_data( pts[i], zT );
+        }
     }
 
-    // postoutput.add_object(uT_gp);
-    // postoutput.add_object(sol_gp);
-    // postoutput.write();
+    postoutput.add_object(uT_gp);
+    postoutput.add_object(sol_gp);
+    postoutput.add_object(zT_gp);
+    postoutput.write();
 
-    // std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
-    // std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
-    // std::cout << nocolor;
+    std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
+    std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
+    std::cout << yellow << "--in B      H1-error is " << std::sqrt(u_H1_error_B) << std::endl;
+    std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error_B) << std::endl;
+    std::cout << yellow << "            z-L2-error is " << std::sqrt(z_L2_error) << std::endl;
+    std::cout << nocolor << std::endl;
 
 
-
+    // silo outputs for domains B and varpi
     silo_database silo;
     silo.create("helmholtz.silo");
     silo.add_mesh(msh, "mesh");
@@ -1510,15 +1560,15 @@ int main(void)
     // typedef disk::simplicial_mesh<T, 3>  mesh_type;
     
     
-    if(0)
+    if(1)
     {
         std::vector<std::string> meshfiles;
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
     
 
         for(size_t i=0; i < meshfiles.size(); i++)
