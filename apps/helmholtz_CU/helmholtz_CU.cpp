@@ -717,8 +717,6 @@ auto make_condensed_helmholtz_assembler(const Mesh& msh, hho_degree_info hdi)
 }
 
 
-
-
 /**********   Helmholtz UC  assemblers   *************/
 
 template<typename Mesh>
@@ -808,14 +806,11 @@ public:
         RHS = vector_type::Zero(system_size);
     }
 
-
-    template<typename Function>
     void
     assemble(const Mesh&                     msh,
              const typename Mesh::cell_type& cl,
              const matrix_type&              lhs,
-             const vector_type&              rhs,
-             const Function&                 dirichlet_bf)
+             const vector_type&              rhs)
     {
         auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
             return msh.is_boundary(fc);
@@ -890,10 +885,9 @@ public:
 
     } // assemble()
 
-    template<typename Function>
     vector_type
     take_u(const Mesh& msh, const typename Mesh::cell_type& cl,
-    const vector_type& solution, const Function& dirichlet_bf)
+           const vector_type& solution)
     {
         auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
@@ -920,11 +914,9 @@ public:
         return ret;
     }
 
-
-    template<typename Function>
     vector_type
     take_z(const Mesh& msh, const typename Mesh::cell_type& cl,
-    const vector_type& solution, const Function& dirichlet_bf)
+           const vector_type& solution)
     {
         auto celdeg = di.cell_degree();
         auto facdeg = di.face_degree();
@@ -988,6 +980,421 @@ template<typename Mesh>
 auto make_helmholtz_UC_assembler(const Mesh& msh, hho_degree_info hdi)
 {
     return helmholtz_UC_assembler<Mesh>(msh, hdi);
+}
+
+
+//////////////  static condensation for the UC Helmholtz problem
+template<typename Mesh, typename T>
+auto
+make_UC_static_condensation(const Mesh& msh, const typename Mesh::cell_type& cl,
+                            const hho_degree_info hdi,
+                            const typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>& lhs,
+                            const typename Eigen::Matrix<T, Eigen::Dynamic, 1>&              rhs)
+{
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    using vector_type = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+
+    const auto cbs       = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
+    const auto fbs       = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
+
+    const auto fcs            = faces(msh, cl);
+    const auto num_faces      = fcs.size();
+    const auto nf_dofs = num_faces * fbs;
+    const auto num_dofs_u = cbs + nf_dofs;
+
+    assert(lhs.rows() == lhs.cols());
+    assert(lhs.cols() == 2*num_dofs_u);
+
+    // lhs matrix under the form ( S  A )
+    //                           ( B  C )
+    // withdraw matrices
+    const matrix_type S_TT = lhs.block(0, 0, cbs, cbs);
+    const matrix_type S_TF = lhs.block(0, cbs, cbs, nf_dofs);
+    const matrix_type S_FT = lhs.block(cbs, 0, nf_dofs, cbs);
+    const matrix_type S_FF = lhs.block(cbs, cbs, nf_dofs, nf_dofs);
+
+    const matrix_type A_TT = lhs.block(0, num_dofs_u, cbs, cbs);
+    const matrix_type A_TF = lhs.block(0, num_dofs_u+cbs, cbs, nf_dofs);
+    const matrix_type A_FT = lhs.block(cbs, num_dofs_u, nf_dofs, cbs);
+    const matrix_type A_FF = lhs.block(cbs, num_dofs_u+cbs, nf_dofs, nf_dofs);
+
+    const matrix_type B_TT = lhs.block(num_dofs_u, 0, cbs, cbs);
+    const matrix_type B_TF = lhs.block(num_dofs_u, cbs, cbs, nf_dofs);
+    const matrix_type B_FT = lhs.block(num_dofs_u+cbs, 0, nf_dofs, cbs);
+    const matrix_type B_FF = lhs.block(num_dofs_u+cbs, cbs, nf_dofs, nf_dofs);
+
+    const matrix_type C_TT = lhs.block(num_dofs_u, num_dofs_u, cbs, cbs);
+    const matrix_type C_TF = lhs.block(num_dofs_u, num_dofs_u+cbs, cbs, nf_dofs);
+    const matrix_type C_FT = lhs.block(num_dofs_u+cbs, num_dofs_u, nf_dofs, cbs);
+    const matrix_type C_FF = lhs.block(num_dofs_u+cbs, num_dofs_u+cbs, nf_dofs, nf_dofs);
+
+    // withdraw rhs
+    const vector_type Fu_T = rhs.block(0, 0, cbs, 1);
+    const vector_type Fu_F = rhs.block(cbs, 0, nf_dofs, 1);
+    const vector_type Fz_T = rhs.block(num_dofs_u, 0, cbs, 1);
+    const vector_type Fz_F = rhs.block(num_dofs_u+cbs, 0, nf_dofs, 1);
+
+
+    // The problem is ( D_TT D_TF ) (X_T) = (G_T)
+    //                ( D_FT D_FF ) (X_F) = (G_F)
+    // compute intermediate matrices and rhs
+    matrix_type D_TT = matrix_type::Zero(2*cbs,2*cbs);
+    D_TT.block(0,0,cbs,cbs) = S_TT;
+    D_TT.block(0,cbs,cbs,cbs) = A_TT;
+    D_TT.block(cbs,0,cbs,cbs) = B_TT;
+    D_TT.block(cbs,cbs,cbs,cbs) = C_TT;
+
+    matrix_type D_TF = matrix_type::Zero(2*cbs,2*nf_dofs);
+    D_TF.block(0,0,cbs,nf_dofs) = S_TF;
+    D_TF.block(0,nf_dofs,cbs,nf_dofs) = A_TF;
+    D_TF.block(cbs,0,cbs,nf_dofs) = B_TF;
+    D_TF.block(cbs,nf_dofs,cbs,nf_dofs) = C_TF;
+
+    matrix_type D_FT = matrix_type::Zero(2*nf_dofs,2*cbs);
+    D_FT.block(0,0,nf_dofs,cbs) = S_FT;
+    D_FT.block(0,cbs,nf_dofs,cbs) = A_FT;
+    D_FT.block(nf_dofs,0,nf_dofs,cbs) = B_FT;
+    D_FT.block(nf_dofs,cbs,nf_dofs,cbs) = C_FT;
+
+    matrix_type D_FF = matrix_type::Zero(2*nf_dofs,2*nf_dofs);
+    D_FF.block(0,0,nf_dofs,nf_dofs) = S_FF;
+    D_FF.block(0,nf_dofs,nf_dofs,nf_dofs) = A_FF;
+    D_FF.block(nf_dofs,0,nf_dofs,nf_dofs) = B_FF;
+    D_FF.block(nf_dofs,nf_dofs,nf_dofs,nf_dofs) = C_FF;
+
+    vector_type G_T = vector_type::Zero(2*cbs);
+    G_T.block(0,0,cbs,1) = Fu_T;
+    G_T.block(cbs,0,cbs,1) = Fz_T;
+
+    vector_type G_F = vector_type::Zero(2*nf_dofs);
+    G_F.block(0,0,nf_dofs,1) = Fu_F;
+    G_F.block(nf_dofs,0,nf_dofs,1) = Fz_F;
+
+    // compute the condensed matrices
+    auto D_cph_QR = D_TT.colPivHouseholderQr();
+
+    matrix_type tD = matrix_type::Zero(2*nf_dofs,2*nf_dofs);
+    tD = D_FF - D_FT * D_cph_QR.solve(D_TF);
+
+    vector_type tG = vector_type::Zero(2*nf_dofs);
+    tG = G_F - D_FT * D_cph_QR.solve(G_T);
+
+    return std::make_pair(tD,tG);
+}
+
+//////////////  static decondensation for the UC Helmholtz problem
+template<typename Mesh, typename T>
+auto
+make_UC_static_decondensation(const Mesh& msh, const typename Mesh::cell_type& cl,
+                              const hho_degree_info hdi,
+                              const typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>& lhs,
+                              const typename Eigen::Matrix<T, Eigen::Dynamic, 1>&              rhs,
+                              const typename Eigen::Matrix<T, Eigen::Dynamic, 1>& solF)
+{
+    using matrix_type = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    using vector_type = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+
+    const auto cbs       = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
+    const auto fbs       = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
+
+    const auto fcs            = faces(msh, cl);
+    const auto num_faces      = fcs.size();
+    const auto nf_dofs = num_faces * fbs;
+    const auto num_dofs_u = cbs + nf_dofs;
+
+    assert(lhs.rows() == lhs.cols());
+    assert(lhs.cols() == 2*num_dofs_u);
+    assert(solF.rows() == 2*nf_dofs);
+
+    // lhs matrix under the form ( S  A )
+    //                           ( B  C )
+    // withdraw matrices
+    const matrix_type S_TT = lhs.block(0, 0, cbs, cbs);
+    const matrix_type S_TF = lhs.block(0, cbs, cbs, nf_dofs);
+
+    const matrix_type A_TT = lhs.block(0, num_dofs_u, cbs, cbs);
+    const matrix_type A_TF = lhs.block(0, num_dofs_u+cbs, cbs, nf_dofs);
+
+    const matrix_type B_TT = lhs.block(num_dofs_u, 0, cbs, cbs);
+    const matrix_type B_TF = lhs.block(num_dofs_u, cbs, cbs, nf_dofs);
+
+    const matrix_type C_TT = lhs.block(num_dofs_u, num_dofs_u, cbs, cbs);
+    const matrix_type C_TF = lhs.block(num_dofs_u, num_dofs_u+cbs, cbs, nf_dofs);
+
+    // withdraw rhs
+    const vector_type Fu_T = rhs.block(0, 0, cbs, 1);
+    const vector_type Fz_T = rhs.block(num_dofs_u, 0, cbs, 1);
+
+    // The problem is ( D_TT D_TF ) (X_T) = (G_T)
+    //                ( D_FT D_FF ) (X_F) = (G_F)
+    // intermediate matrices and rhs
+    matrix_type D_TT = matrix_type::Zero(2*cbs,2*cbs);
+    D_TT.block(0,0,cbs,cbs) = S_TT;
+    D_TT.block(0,cbs,cbs,cbs) = A_TT;
+    D_TT.block(cbs,0,cbs,cbs) = B_TT;
+    D_TT.block(cbs,cbs,cbs,cbs) = C_TT;
+
+    matrix_type D_TF = matrix_type::Zero(2*cbs,2*nf_dofs);
+    D_TF.block(0,0,cbs,nf_dofs) = S_TF;
+    D_TF.block(0,nf_dofs,cbs,nf_dofs) = A_TF;
+    D_TF.block(cbs,0,cbs,nf_dofs) = B_TF;
+    D_TF.block(cbs,nf_dofs,cbs,nf_dofs) = C_TF;
+
+    vector_type G_T = vector_type::Zero(2*cbs);
+    G_T.block(0,0,cbs,1) = Fu_T;
+    G_T.block(cbs,0,cbs,1) = Fz_T;
+
+    // compute the cell solution
+    auto D_cph_QR = D_TT.colPivHouseholderQr();
+    vector_type X_T = D_cph_QR.solve( G_T - D_TF * solF );
+
+    // return the full solution
+    vector_type ret = vector_type::Zero(2*num_dofs_u);
+    ret.block(0,0,cbs,1) = X_T.block(0,0,cbs,1);
+    ret.block(cbs,0,nf_dofs,1) = solF.block(0,0,nf_dofs,1);
+    ret.block(num_dofs_u,0,cbs,1) = X_T.block(cbs,0,cbs,1);
+    ret.block(num_dofs_u+cbs,0,nf_dofs,1) = solF.block(nf_dofs,0,nf_dofs,1);
+
+    return ret;
+}
+
+
+// condensed assembler for UC Helmholtz
+template<typename Mesh>
+class condensed_helmholtz_UC_assembler : public helmholtz_UC_assembler<Mesh>
+{
+    using T = typename Mesh::coordinate_type;
+
+    class assembly_index
+    {
+        size_t  idx;
+        bool    assem;
+
+    public:
+        assembly_index(size_t i, bool as)
+            : idx(i), assem(as)
+        {}
+
+        operator size_t() const
+        {
+            if (!assem)
+                throw std::logic_error("Invalid assembly_index");
+
+            return idx;
+        }
+
+        bool assemble() const
+        {
+            return assem;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const assembly_index& as)
+        {
+            os << "(" << as.idx << "," << as.assem << ")";
+            return os;
+        }
+    };
+
+public:
+    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
+    typedef Matrix<T, Dynamic, 1>       vector_type;
+
+    std::vector< matrix_type > loc_LHS;
+    std::vector< vector_type > loc_RHS;
+
+    condensed_helmholtz_UC_assembler(const Mesh& msh, hho_degree_info hdi)
+        : helmholtz_UC_assembler<Mesh>(msh, hdi)
+    {
+        auto num_cells = msh.cells_size();
+        loc_LHS.resize(num_cells);
+        loc_RHS.resize(num_cells);
+
+        const auto fbs = scalar_basis_size(hdi.face_degree(), Mesh::dimension - 1);
+        const auto cbs = scalar_basis_size(hdi.cell_degree(), Mesh::dimension);
+        this->system_size    = fbs * (this->num_other_faces + this->num_all_faces);
+
+        this->LHS = SparseMatrix<T>(this->system_size, this->system_size);
+        this->RHS = vector_type::Zero(this->system_size);
+    }
+
+    void
+    assemble(const Mesh&                     msh,
+             const typename Mesh::cell_type& cl,
+             const matrix_type&              lhs,
+             const vector_type&              rhs)
+    {
+        // store local LHS and RHS
+        auto cell_offset = offset(msh, cl);
+        loc_LHS.at( cell_offset ) = lhs;
+        loc_RHS.at( cell_offset ) = rhs;
+
+
+        auto sc = make_UC_static_condensation(msh, cl, this->di, lhs, rhs);
+        auto lhs_sc = sc.first;
+        auto rhs_sc = sc.second;
+
+        auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+            return msh.is_boundary(fc);
+        };
+
+        const auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        const auto fcs = faces(msh, cl);
+
+        std::vector<assembly_index> asm_map;
+        asm_map.reserve(2 * fcs.size() * fbs);
+
+        // init asm_map for uF
+        for (size_t face_i = 0; face_i < fcs.size(); face_i++)
+        {
+            const auto fc              = fcs[face_i];
+            const auto face_offset     = priv::offset(msh, fc);
+            const auto face_LHS_offset = face_offset * fbs;
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, true) );
+        }
+
+        // init asm_map for zF
+        auto z_offset = this->num_all_faces * fbs;
+        for (size_t face_i = 0; face_i < fcs.size(); face_i++)
+        {
+            const auto fc              = fcs[face_i];
+            const auto face_offset     = priv::offset(msh, fc);
+            const auto face_LHS_offset = z_offset + this->compress_table.at(face_offset) * fbs;
+
+            const bool dirichlet = is_dirichlet(fc);
+
+            for (size_t i = 0; i < fbs; i++)
+                asm_map.push_back( assembly_index(face_LHS_offset+i, !dirichlet) );
+        }
+
+        // assemble LHS
+        for (size_t i = 0; i < lhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+
+            for (size_t j = 0; j < lhs_sc.cols(); j++)
+            {
+                if ( asm_map[j].assemble() )
+                    this->triplets.push_back( Triplet<T>(asm_map[i], asm_map[j], lhs_sc(i,j)) );
+            }
+        }
+
+        // assemble RHS
+        for (size_t i = 0; i < rhs_sc.rows(); i++)
+        {
+            if (!asm_map[i].assemble())
+                continue;
+            this->RHS(asm_map[i]) += rhs_sc(i);
+        }
+
+    } // assemble()
+
+    vector_type
+    get_solF(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const vector_type& solution)
+    {
+        auto facdeg = this->di.face_degree();
+        auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+
+        auto num_faces = fcs.size();
+
+        vector_type face_sol = vector_type::Zero(2*num_faces*fbs);
+
+        for (size_t face_i = 0; face_i < num_faces; face_i++)
+        {
+            auto fc = fcs[face_i];
+
+            auto is_dirichlet = [&](const typename Mesh::face_type& fc) -> bool {
+                return msh.is_boundary(fc);
+            };
+
+            bool dirichlet = is_dirichlet(fc);
+
+            auto face_offset = priv::offset(msh, fc);
+            auto face_SOL_offset = face_offset*fbs;
+
+            // get uF
+            face_sol.block(face_i*fbs, 0, fbs, 1) = solution.block(face_SOL_offset, 0, fbs, 1);
+
+            // get zF
+            if(dirichlet)
+            {
+                face_sol.block((num_faces+face_i)*fbs, 0, fbs, 1) = vector_type::Zero(fbs);
+            }
+            else
+            {
+                face_SOL_offset = (this->num_all_faces + this->compress_table.at(face_offset))*fbs;
+                face_sol.block((num_faces+face_i)*fbs, 0, fbs, 1)
+                    = solution.block(face_SOL_offset, 0, fbs, 1);
+            }
+        }
+        return face_sol;
+    }
+
+    vector_type
+    take_u(const Mesh& msh, const typename Mesh::cell_type& cl,
+           const vector_type& solution)
+    {
+        auto solF = get_solF(msh, cl, solution);
+        auto cell_offset = offset(msh, cl);
+
+        auto full_sol = make_UC_static_decondensation(msh, cl, this->di, loc_LHS[cell_offset], loc_RHS[cell_offset], solF);
+
+        auto celdeg = this->di.cell_degree();
+        auto facdeg = this->di.face_degree();
+
+        auto cbs = scalar_basis_size(this->di.cell_degree(), Mesh::dimension);
+        auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+        auto tot_dofs = cbs + fcs.size() * fbs;
+
+
+        return full_sol.head(tot_dofs);
+    }
+
+    vector_type
+    take_z(const Mesh& msh, const typename Mesh::cell_type& cl,
+           const vector_type& solution)
+    {
+        auto solF = get_solF(msh, cl, solution);
+        auto cell_offset = offset(msh, cl);
+
+        auto full_sol = make_UC_static_decondensation(msh, cl, this->di, loc_LHS[cell_offset], loc_RHS[cell_offset], solF);
+
+        auto celdeg = this->di.cell_degree();
+        auto facdeg = this->di.face_degree();
+
+        auto cbs = scalar_basis_size(this->di.cell_degree(), Mesh::dimension);
+        auto fbs = scalar_basis_size(this->di.face_degree(), Mesh::dimension-1);
+        auto fcs = faces(msh, cl);
+        auto tot_dofs = cbs + fcs.size() * fbs;
+
+        return full_sol.tail(tot_dofs);
+    }
+
+    void finalize(void)
+    {
+        this->LHS.setFromTriplets( this->triplets.begin(), this->triplets.end() );
+        this->triplets.clear();
+
+        dump_sparse_matrix(this->LHS, "diff.dat");
+    }
+
+    size_t num_assembled_faces() const
+    {
+        return this->num_other_faces;
+    }
+
+};
+
+
+template<typename Mesh>
+auto make_condensed_helmholtz_UC_assembler(const Mesh& msh, hho_degree_info hdi)
+{
+    return condensed_helmholtz_UC_assembler<Mesh>(msh, hdi);
 }
 
 /////////////////////////////////////////////////////////////////
@@ -1354,10 +1761,8 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto B_fun = make_B_function(msh);
 
 
-    // auto assembler = make_helmholtz_assembler(msh, hdi);
     auto assembler = make_helmholtz_UC_assembler(msh, hdi);
-    auto assembler_sc = make_condensed_helmholtz_assembler(msh, hdi);
-
+    auto assembler_sc = make_condensed_helmholtz_UC_assembler(msh, hdi);
 
     bool scond = false;
 
@@ -1399,9 +1804,9 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         }
 
         if(scond)
-            assembler_sc.assemble(msh, cl, lhs, rhs, sol_fun);
+            assembler_sc.assemble(msh, cl, lhs, rhs);
         else
-            assembler.assemble(msh, cl, lhs, rhs, sol_fun);
+            assembler.assemble(msh, cl, lhs, rhs);
     }
 
     if(scond)
@@ -1457,13 +1862,13 @@ run_Helmholtz(const Mesh& msh, size_t degree)
 
         if(scond)
         {
-            fullsol = assembler_sc.take_u(msh, cl, sol, sol_fun);
-
+            fullsol = assembler_sc.take_u(msh, cl, sol);
+            dualsol = assembler_sc.take_z(msh, cl, sol);
         }
         else
         {
-            fullsol = assembler.take_u(msh, cl, sol, sol_fun);
-            dualsol = assembler.take_z(msh, cl, sol, sol_fun);
+            fullsol = assembler.take_u(msh, cl, sol);
+            dualsol = assembler.take_z(msh, cl, sol);
         }
 
         auto cell_dofs = fullsol.head( cbs );
