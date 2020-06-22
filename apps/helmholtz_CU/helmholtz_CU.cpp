@@ -200,7 +200,10 @@ struct varpi_functor< Mesh<T, 2, Storage> >
     {
         scalar_type ret;
 
-        if( (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
+        // bool dom1 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        // bool dom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        bool dom3 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125);
+        if( dom3 )
             ret = 0.0;
         else
             ret = 1.0;
@@ -247,7 +250,12 @@ struct B_functor< Mesh<T, 2, Storage> >
     {
         scalar_type ret;
 
-        if( (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
+        // bool dom1 = (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        // bool dom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875) &&
+        //     ( ((pt.x() >= 0.0) && (pt.x() <= 0.25)) || ((pt.x() >= 0.75) && (pt.x() <= 1.0)) );
+        bool dom3 = ((pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125)) ||
+            ((pt.y() >= 0.875) && (pt.x() <= 0.875));
+        if( dom3 )
             ret = 0.0;
         else
             ret = 1.0;
