@@ -1767,6 +1767,32 @@ public:
 };
 
 
+//////////////////////////  ERROR OUTPUTS  //////////////////////////////
+
+// returns m_T(u-u_T,u-u_T)
+template<typename Mesh, typename Function>
+typename Mesh::coordinate_type
+make_m_error(const Mesh& msh, const typename Mesh::cell_type& cl,
+             const Function& sol_fun, hho_degree_info hdi,
+             const Matrix<typename Mesh::coordinate_type, Dynamic, 1> solT)
+{
+    using T = typename Mesh::coordinate_type;
+
+    const auto degree     = hdi.cell_degree();
+    auto cb = make_scalar_monomial_basis(msh, cl, degree);
+
+    // compute u - u_T
+    auto proj_u = project_function(msh, cl, cb, sol_fun, degree);
+    auto delta_u = proj_u - solT;
+
+    // compute mass matrix
+    auto mat = make_mass_matrix(msh, cl, cb);
+
+    T error = delta_u.dot( mat * delta_u );
+
+    return error;
+}
+
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////   MAIN PART   /////////////////////////////
 /////////////////////////////////////////////////////////////////////////
@@ -1889,6 +1915,10 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     T u_L2_error_B = 0.0;
     T z_L2_error = 0.0;
 
+    T m_error = 0.0;
+    T s_error = 0.0;
+    T s_star_error = 0.0;
+
     postprocess_output<T>  postoutput;
 
     auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
@@ -1957,6 +1987,16 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             T zT = cell_dofs_z.dot( cb.eval_functions( pts[i] ) );
             zT_gp->add_data( pts[i], zT );
         }
+
+        // compute more errors
+        if( varpi_fun(barycenter(msh, cl)) > 0.5)
+        {
+            m_error += make_m_error(msh, cl, sol_fun, hdi, cell_dofs);
+        }
+        auto stab        = make_scalar_stabilization_UC(msh, cl, hdi);
+        auto stab_star   = make_scalar_stabilization_UC_star(msh, cl, hdi);
+        s_error += fullsol.dot( stab*fullsol );
+        s_star_error += dualsol.dot( stab_star * dualsol);
     }
 
     postoutput.add_object(uT_gp);
@@ -1969,6 +2009,10 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     std::cout << yellow << "--in B      H1-error is " << std::sqrt(u_H1_error_B) << std::endl;
     std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error_B) << std::endl;
     std::cout << yellow << "            z-L2-error is " << std::sqrt(z_L2_error) << std::endl;
+    std::cout << std::endl;
+    std::cout << blue <<   "            m-error is  " << std::sqrt(m_error) << std::endl;
+    std::cout << blue <<   "            s-error is  " << std::sqrt(s_error) << std::endl;
+    std::cout << blue <<   "            s*-error is " << std::sqrt(s_star_error) << std::endl;
     std::cout << nocolor << std::endl;
 
 
@@ -1989,7 +2033,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     silo.add_variable("mesh", silo_B);
     silo.close();
 
-    return std::sqrt(u_H1_error);
+    return std::sqrt(u_L2_error_B);
 }
 
 
