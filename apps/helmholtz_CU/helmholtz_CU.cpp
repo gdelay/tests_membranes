@@ -30,8 +30,6 @@ struct rhs_functor< Mesh<T, 2, Storage> >
 
     scalar_type operator()(const point_type& pt) const
     {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
         return 0.0;
     }
 };
@@ -45,10 +43,7 @@ struct rhs_functor< Mesh<T, 3, Storage> >
 
     scalar_type operator()(const point_type& pt) const
     {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        auto sin_pz = std::sin(M_PI * pt.z());
-        return 3.0 * M_PI * M_PI * sin_px * sin_py * sin_pz;
+        return 0.0;
     }
 };
 
@@ -100,10 +95,11 @@ struct solution_functor< Mesh<T, 3, Storage> >
 
     scalar_type operator()(const point_type& pt) const
     {
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        auto sin_pz = std::sin(M_PI * pt.z());
-        return sin_px * sin_py * sin_pz;
+        T coeff = omega / std::sqrt(3);
+        auto cos_cx = std::cos(coeff * pt.x());
+        auto cos_cy = std::cos(coeff * pt.y());
+        auto cos_cz = std::cos(coeff * pt.z());
+        return cos_cx * cos_cy * cos_cz;
     }
 };
 
@@ -162,16 +158,17 @@ struct grad_functor< Mesh<T, 3, Storage> >
     auto operator()(const point_type& pt) const
     {
         Matrix<T, 1, 3> ret;
-        auto sin_px = std::sin(M_PI * pt.x());
-        auto sin_py = std::sin(M_PI * pt.y());
-        auto sin_pz = std::sin(M_PI * pt.z());
-        auto cos_px = std::cos(M_PI * pt.x());
-        auto cos_py = std::cos(M_PI * pt.y());
-        auto cos_pz = std::cos(M_PI * pt.z());
+        T coeff = omega / std::sqrt(3);
+        auto sin_cx = std::sin(coeff * pt.x());
+        auto sin_cy = std::sin(coeff * pt.y());
+        auto sin_cz = std::sin(coeff * pt.z());
+        auto cos_cx = std::cos(coeff * pt.x());
+        auto cos_cy = std::cos(coeff * pt.y());
+        auto cos_cz = std::cos(coeff * pt.z());
 
-        ret(0) = M_PI * cos_px * sin_py * sin_pz;
-        ret(1) = M_PI * sin_px * cos_py * sin_pz;
-        ret(2) = M_PI * sin_px * sin_py * cos_pz;
+        ret(0) = - coeff * sin_cx * cos_cy * cos_cz;
+        ret(1) = - coeff * cos_cx * sin_cy * cos_cz;
+        ret(2) = - coeff * cos_cx * cos_cy * sin_cz;
 
         return ret;
     }
@@ -200,10 +197,10 @@ struct varpi_functor< Mesh<T, 2, Storage> >
     {
         scalar_type ret;
 
-        // bool dom1 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
-        // bool dom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875);
-        bool dom3 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125);
-        if( dom3 )
+        // bool Ndom1 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        // bool Ndom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        bool Ndom3 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125);
+        if( Ndom3 )
             ret = 0.0;
         else
             ret = 1.0;
@@ -212,19 +209,26 @@ struct varpi_functor< Mesh<T, 2, Storage> >
     }
 };
 
-// template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
-// struct varpi_functor< Mesh<T, 3, Storage> >
-// {
-//     typedef Mesh<T,3,Storage>               mesh_type;
-//     typedef typename mesh_type::coordinate_type scalar_type;
-//     typedef typename mesh_type::point_type  point_type;
+template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+struct varpi_functor< Mesh<T, 3, Storage> >
+{
+    typedef Mesh<T,3,Storage>               mesh_type;
+    typedef typename mesh_type::coordinate_type scalar_type;
+    typedef typename mesh_type::point_type  point_type;
 
-//     scalar_type operator()(const point_type& pt) const
-//     {
-//         scalar_type ret;
-//         return ret;
-//     }
-// };
+    scalar_type operator()(const point_type& pt) const
+    {
+        scalar_type ret;
+        // bool Ndom1 = (pt.x() >= 0.125) && (pt.y() >= 0.125) && (pt.z() >= 0.125);
+        bool Ndom2 = (pt.x() >= 0.125) && (pt.x() <= 0.875);
+        if( Ndom2 )
+            ret = 0.0;
+        else
+            ret = 1.0;
+
+        return ret;
+    }
+};
 
 template<typename Mesh>
 auto make_varpi_function(const Mesh& msh)
@@ -250,12 +254,12 @@ struct B_functor< Mesh<T, 2, Storage> >
     {
         scalar_type ret;
 
-        // bool dom1 = (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
-        // bool dom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875) &&
+        // bool Ndom1 = (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
+        // bool Ndom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875) &&
         //     ( ((pt.x() >= 0.0) && (pt.x() <= 0.25)) || ((pt.x() >= 0.75) && (pt.x() <= 1.0)) );
-        bool dom3 = ((pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125)) ||
+        bool Ndom3 = ((pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125)) ||
             ((pt.y() >= 0.875) && (pt.x() <= 0.875));
-        if( dom3 )
+        if( Ndom3 )
             ret = 0.0;
         else
             ret = 1.0;
@@ -264,25 +268,28 @@ struct B_functor< Mesh<T, 2, Storage> >
     }
 };
 
-// template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
-// struct B_functor< Mesh<T, 3, Storage> >
-// {
-//     typedef Mesh<T,3,Storage>               mesh_type;
-//     typedef typename mesh_type::coordinate_type scalar_type;
-//     typedef typename mesh_type::point_type  point_type;
+template<template<typename, size_t, typename> class Mesh, typename T, typename Storage>
+struct B_functor< Mesh<T, 3, Storage> >
+{
+    typedef Mesh<T,3,Storage>               mesh_type;
+    typedef typename mesh_type::coordinate_type scalar_type;
+    typedef typename mesh_type::point_type  point_type;
 
-//     scalar_type operator()(const point_type& pt) const
-//     {
-//         scalar_type ret;
+    scalar_type operator()(const point_type& pt) const
+    {
+        scalar_type ret;
 
-//         if( (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875) )
-//             ret = 0.0;
-//         else
-//             ret = 1.0;
+        bool dom1 = (pt.x() <= 0.875) && (pt.y() <= 0.875) && (pt.z() <= 0.875);
+        bool dom2 = (pt.x() <= 0.125) || (pt.x() >= 0.875) ||
+            ( (pt.y() >= 0.125) && (pt.y() <= 0.875) && (pt.z() >= 0.125) && (pt.z() <= 0.875) );
+        if( dom2 )
+            ret = 1.0;
+        else
+            ret = 0.0;
 
-//         return ret;
-//     }
-// };
+        return ret;
+    }
+};
 
 template<typename Mesh>
 auto make_B_function(const Mesh& msh)
@@ -1805,7 +1812,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     using T = typename Mesh::coordinate_type;
 
 
-    T omega = 10.0;
+    T omega = 1.0;
 
     typedef Matrix<T, Dynamic, Dynamic> matrix_type;
     typedef Matrix<T, Dynamic, 1>       vector_type;
@@ -1824,7 +1831,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto assembler = make_helmholtz_UC_assembler(msh, hdi);
     auto assembler_sc = make_condensed_helmholtz_UC_assembler(msh, hdi);
 
-    bool scond = false;
+    bool scond = true;
 
     for (auto& cl : msh)
     {
@@ -1919,11 +1926,13 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     T s_error = 0.0;
     T s_star_error = 0.0;
 
+#if 0
     postprocess_output<T>  postoutput;
 
     auto uT_gp  = std::make_shared< gnuplot_output_object<T> >("uT.dat");
     auto sol_gp  = std::make_shared< gnuplot_output_object<T> >("sol.dat");
     auto zT_gp  = std::make_shared< gnuplot_output_object<T> >("zT.dat");
+#endif
 
     for (auto& cl : msh)
     {
@@ -1977,6 +1986,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             }
         }
 
+#if 0
         // gnuplot output for cells
         auto pts = points(msh, cl);
         for(size_t i=0; i < pts.size(); i++)
@@ -1987,6 +1997,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             T zT = cell_dofs_z.dot( cb.eval_functions( pts[i] ) );
             zT_gp->add_data( pts[i], zT );
         }
+#endif
 
         // compute more errors
         if( varpi_fun(barycenter(msh, cl)) > 0.5)
@@ -1999,10 +2010,12 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         s_star_error += dualsol.dot( stab_star * dualsol);
     }
 
+#if 0
     postoutput.add_object(uT_gp);
     postoutput.add_object(sol_gp);
     postoutput.add_object(zT_gp);
     postoutput.write();
+#endif
 
     std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
     std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
@@ -2016,6 +2029,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     std::cout << nocolor << std::endl;
 
 
+#if 0
     // silo outputs for domains B and varpi
     silo_database silo;
     silo.create("helmholtz.silo");
@@ -2032,6 +2046,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     silo.add_variable("mesh", silo_varpi);
     silo.add_variable("mesh", silo_B);
     silo.close();
+#endif
 
     return std::sqrt(u_L2_error_B);
 }
@@ -2081,26 +2096,31 @@ int main(void)
     // degree of the polynomials on the faces
     size_t degree = 1;
     
-    typedef disk::generic_mesh<T, 2>  mesh_type;
+    // typedef disk::generic_mesh<T, 2>  mesh_type;
     // typedef disk::simplicial_mesh<T, 3>  mesh_type;
-    
-    
+    typedef disk::cartesian_mesh<T, 3>  mesh_type;
+
     if(1)
     {
         std::vector<std::string> meshfiles;
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
-    
+        // // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
+        // // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
+
+        // 3D
+        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-8-8-8.hex");
+        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-16-16-16.hex");
+        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-32-32-32.hex");
 
         for(size_t i=0; i < meshfiles.size(); i++)
         {
             mesh_type msh;
-            disk::fvca5_mesh_loader<T, 2> loader;
+            // disk::fvca5_mesh_loader<T, 2> loader;
             // disk::netgen_mesh_loader<T, 3> loader;
+            disk::cartesian_mesh_loader<T, 3> loader;
             if (!loader.read_mesh(meshfiles.at(i)) )
             {
                 std::cout << "Problem loading mesh." << std::endl;
@@ -2113,7 +2133,8 @@ int main(void)
     else
     {
         mesh_type msh;
-        disk::fvca5_mesh_loader<T, 2> loader;
+        // disk::fvca5_mesh_loader<T, 2> loader;
+        disk::cartesian_mesh_loader<T, 3> loader;
         // disk::netgen_mesh_loader<T, 3> loader;
         std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1";
         // std::string mesh_filename = "../../../diskpp/meshes/3D_tetras/netgen/cube4.mesh";
