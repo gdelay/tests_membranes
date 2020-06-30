@@ -1676,6 +1676,32 @@ make_scalar_stabilization_UC_star(const Mesh& msh, const typename Mesh::cell_typ
     return ret;
 }
 
+// noised rhs to add a noise to the known data
+template<typename Mesh, typename Element, typename Basis, typename Function>
+Matrix<typename Mesh::coordinate_type, Dynamic, 1>
+make_noised_rhs(const Mesh& msh, const Element& elem, const Basis& basis, const Function& rhs_fun,
+                const typename Mesh::coordinate_type amplitude, size_t di = 0)
+{
+    const auto degree     = basis.degree();
+    const auto basis_size = basis.size();
+
+    using T = typename Basis::scalar_type;
+
+    Matrix<T, Dynamic, 1> ret = Matrix<T, Dynamic, 1>::Zero(basis_size);
+
+    const auto qps = integrate(msh, elem, 2 * (degree + di));
+
+    for (auto& qp : qps)
+    {
+        auto rand = ((std::rand() % 200)-100) * (0.01 * amplitude);
+        const auto phi  = basis.eval_functions(qp.point());
+        const auto qp_f = priv::inner_product(qp.weight(), rhs_fun(qp.point()) + rand);
+        ret += priv::outer_product(phi, qp_f);
+    }
+
+    return ret;
+}
+
 
 /////////////////////////////   OUTPUT   OBJECTS  ////////////////////////////////
 template<typename T>
@@ -1802,13 +1828,21 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         lhs.block(0, 0, num_dofs_lap, num_dofs_lap) += gamma * stab;
 
         T coeff = 1.0;
+        T hT = diameter(msh, cl);
+        T noise = 1.0;
+        for(size_t i = 0; i < degree; i++)
+        {
+            noise = noise * hT;
+        }
         // m_h :
         if( varpi_fun(barycenter(msh,cl)) > 0.5)
         {
             // add m_h terms
             lhs.block(0, 0, cbs, cbs) += coeff * make_mass_matrix(msh, cl, cb);
+            // rhs.block(0, 0, cbs, 1)
+            //     += coeff * make_rhs(msh, cl, cb, sol_fun, hdi.cell_degree());
             rhs.block(0, 0, cbs, 1)
-                += coeff * make_rhs(msh, cl, cb, sol_fun, hdi.cell_degree());
+                += coeff * make_noised_rhs(msh, cl, cb, sol_fun, noise, hdi.cell_degree());
         }
 
         if(scond)
