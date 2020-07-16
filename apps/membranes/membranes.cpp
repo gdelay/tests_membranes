@@ -68,7 +68,12 @@ class Lagrange_scalar_basis<Mesh<T, 2, Storage>, typename Mesh<T, 2, Storage>::c
         basis_degree = degree;
 
         // store the vertices
-        vertices = points(msh, cl);
+        auto pts = points(msh, cl);
+        assert( pts.size() == 3);
+        vertices.push_back( pts[0] );
+        vertices.push_back( pts[1] );
+        vertices.push_back( pts[2] );
+        // vertices = points(msh, cl);
 
         basis_size = scalar_basis_size(degree, 2);
     }
@@ -3847,18 +3852,19 @@ int main(void)
     using T = double;
 
     // degree of the polynomials on the faces
-    size_t degree = 3;
+    size_t degree = 0;
     
     typedef disk::generic_mesh<T, 2>  mesh_type;
+    typedef disk::simplicial_mesh<T, 2>  mesh_type2;
     
-    
-    if(1)
+    if(0)
     {
         std::vector<std::string> meshfiles;
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
         meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
     
 
@@ -3878,9 +3884,11 @@ int main(void)
     }
     else
     {
-        mesh_type msh;
-        disk::fvca5_mesh_loader<T, 2> loader;
-        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1";
+        mesh_type2 msh;
+        // disk::fvca5_mesh_loader<T, 2> loader;
+        disk::netgen_mesh_loader<T, 2> loader;
+        // std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1";
+        std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/netgen/mesh_j3.mesh2d";
         if (!loader.read_mesh(mesh_filename) )
         {
             std::cout << "Problem loading mesh." << std::endl;
