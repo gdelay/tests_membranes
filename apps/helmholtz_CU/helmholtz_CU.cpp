@@ -1611,8 +1611,7 @@ make_scalar_stabilization_UC(const Mesh& msh, const typename Mesh::cell_type& cl
 }
 
 
-// we compute hT^{-1} (uT - uF , vT - vF)_F + hT^{-1} (uT , vT)_{\partial \Omega} 
-//            + (\GRAD uT , \GRAD vT)_T
+// we compute hT^{-1} (uT - uF , vT - vF)_F + (\GRAD uT , \GRAD vT)_T
 template<typename Mesh>
 Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
 make_scalar_stabilization_UC_star(const Mesh& msh, const typename Mesh::cell_type& cl,
@@ -1652,18 +1651,6 @@ make_scalar_stabilization_UC_star(const Mesh& msh, const typename Mesh::cell_typ
             ret.block(cbs + i * fbs, 0, fbs, cbs) -= qp.weight() * f_phi * c_phi.transpose();
             ret.block(cbs + i * fbs, cbs + i * fbs, fbs, fbs)
                 += qp.weight() * f_phi * f_phi.transpose();
-        }
-
-        // compute (uT,vT)_{\partial \Omega}
-        if( msh.is_boundary(fc) )
-        {
-            for (auto& qp : qps_F)
-            {
-                const auto c_phi = cb.eval_functions(qp.point());
-                const auto f_phi = fb.eval_functions(qp.point());
-
-                ret.block(0, 0, cbs, cbs) += qp.weight() * c_phi * c_phi.transpose();
-            }
         }
     }
 
