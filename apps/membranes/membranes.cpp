@@ -3561,7 +3561,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         if(r2 > R2)
             return -24.0*(r2-R2)*(r2-R2)*(r2-R2)*(r2-R2)*(6.0*r2-R2);
         else
-            return -r2*(R2-r2)*(R2-r2)*(R2-r2);
+            return -1000.0*r2*std::sqrt(r2)*(R2-r2)*(R2-r2)*(R2-r2);
     };
     auto rhs_fun2 = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
@@ -3571,7 +3571,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         if(r2 > R2)
             return 24.0*(r2-R2)*(r2-R2)*(r2-R2)*(r2-R2)*(6.0*r2-R2);
         else
-            return r2*(R2-r2)*(R2-r2)*(R2-r2);
+            return 1000.0*r2*std::sqrt(r2)*(R2-r2)*(R2-r2)*(R2-r2);
     };
     auto sol_fun1 = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
@@ -3641,7 +3641,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         if(r2 > R2)
             return 0.0;
         else
-            return r2*(R2-r2)*(R2-r2)*(R2-r2);
+            return 1000.0*r2*std::sqrt(r2)*(R2-r2)*(R2-r2)*(R2-r2);
     };
 #endif
 
