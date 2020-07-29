@@ -2096,31 +2096,31 @@ int main(void)
     // degree of the polynomials on the faces
     size_t degree = 1;
     
-    // typedef disk::generic_mesh<T, 2>  mesh_type;
+    typedef disk::generic_mesh<T, 2>  mesh_type;
     // typedef disk::simplicial_mesh<T, 3>  mesh_type;
-    typedef disk::cartesian_mesh<T, 3>  mesh_type;
+    // typedef disk::cartesian_mesh<T, 3>  mesh_type;
 
     if(1)
     {
         std::vector<std::string> meshfiles;
-        // // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
-        // // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
+        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
+        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
 
         // 3D
-        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-8-8-8.hex");
-        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-16-16-16.hex");
-        meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-32-32-32.hex");
+        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-8-8-8.hex");
+        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-16-16-16.hex");
+        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-32-32-32.hex");
 
         for(size_t i=0; i < meshfiles.size(); i++)
         {
             mesh_type msh;
-            // disk::fvca5_mesh_loader<T, 2> loader;
+            disk::fvca5_mesh_loader<T, 2> loader;
             // disk::netgen_mesh_loader<T, 3> loader;
-            disk::cartesian_mesh_loader<T, 3> loader;
+            // disk::cartesian_mesh_loader<T, 3> loader;
             if (!loader.read_mesh(meshfiles.at(i)) )
             {
                 std::cout << "Problem loading mesh." << std::endl;
@@ -2133,8 +2133,8 @@ int main(void)
     else
     {
         mesh_type msh;
-        // disk::fvca5_mesh_loader<T, 2> loader;
-        disk::cartesian_mesh_loader<T, 3> loader;
+        disk::fvca5_mesh_loader<T, 2> loader;
+        // disk::cartesian_mesh_loader<T, 3> loader;
         // disk::netgen_mesh_loader<T, 3> loader;
         std::string mesh_filename = "../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1";
         // std::string mesh_filename = "../../../diskpp/meshes/3D_tetras/netgen/cube4.mesh";
