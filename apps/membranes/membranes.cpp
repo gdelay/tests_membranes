@@ -15,6 +15,8 @@
 #include "core/loaders/loader.hpp"
 #include "cfem/cfem.hpp"
 
+#include "output/silo.hpp"
+
 //////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////   LAGRANGE BASES    ////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
@@ -3827,6 +3829,27 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             }
         }
     }
+
+
+#if 1
+    // silo outputs for domains B and varpi
+    silo_database silo;
+    silo.create("membrane.silo");
+    silo.add_mesh(msh, "mesh");
+    // std::vector<T> cell_varpi, cell_B;
+
+    // for(auto& cl : msh)
+    // {
+    //     cell_varpi.push_back( varpi_fun( barycenter(msh, cl) ) );
+    //     cell_B.push_back( B_fun( barycenter(msh, cl) ) );
+    // }
+    // silo_zonal_variable<T> silo_varpi("varpi", cell_varpi);
+    // silo_zonal_variable<T> silo_B("B", cell_B);
+    // silo.add_variable("mesh", silo_varpi);
+    // silo.add_variable("mesh", silo_B);
+    silo.close();
+#endif
+
 
     postoutput.add_object(uT1_gp);
     postoutput.add_object(uT2_gp);
