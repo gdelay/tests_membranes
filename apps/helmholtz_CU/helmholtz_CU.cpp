@@ -1541,135 +1541,6 @@ make_scalar_fool_stabilization(const Mesh& msh, const typename Mesh::cell_type& 
     return ret;
 }
 
-
-
-// we compute hT^{-1} (uT - uF , vT - vF)_F + hT^{2k} (uT , vT)_T
-template<typename Mesh>
-Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
-make_scalar_stabilization_UC(const Mesh& msh, const typename Mesh::cell_type& cl,
-                             const hho_degree_info& di)
-{
-    using T = typename Mesh::coordinate_type;
-    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
-
-    const auto celdeg = di.cell_degree();
-    const auto facdeg = di.face_degree();
-
-    const auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
-    const auto fbs = scalar_basis_size(facdeg, Mesh::dimension - 1);
-
-    const auto num_faces = howmany_faces(msh, cl);
-    const auto total_dofs = cbs + num_faces * fbs;
-
-    matrix_type       ret = matrix_type::Zero(total_dofs, total_dofs);
-
-    auto cb = make_scalar_monomial_basis(msh, cl, celdeg);
-
-    // compute (uT - uF , vT - vF)_F
-    const auto fcs = faces(msh, cl);
-    for (size_t i = 0; i < num_faces; i++)
-    {
-        const auto fc = fcs[i];
-        auto fb = make_scalar_monomial_basis(msh, fc, facdeg);
-
-        const auto qps_F = integrate(msh, fc, 2*std::max(facdeg, celdeg));
-        for (auto& qp : qps_F)
-        {
-            const auto c_phi = cb.eval_functions(qp.point());
-            const auto f_phi = fb.eval_functions(qp.point());
-
-            ret.block(0, 0, cbs, cbs) += qp.weight() * c_phi * c_phi.transpose();
-            ret.block(0, cbs + i * fbs, cbs, fbs) -= qp.weight() * c_phi * f_phi.transpose();
-            ret.block(cbs + i * fbs, 0, fbs, cbs) -= qp.weight() * f_phi * c_phi.transpose();
-            ret.block(cbs + i * fbs, cbs + i * fbs, fbs, fbs)
-                += qp.weight() * f_phi * f_phi.transpose();
-        }
-    }
-
-    // scale with hT^{-1}
-    const auto hT  = diameter(msh, cl);
-    ret = (1.0/hT) * ret;
-
-    // compute hT^{2k}
-    const auto hT2  = hT * hT;
-    auto hT2k = 1.0;
-    for(size_t i = 0; i < celdeg; i++)
-    {
-        hT2k = hT2k * hT2;
-    }
-
-    // compute hT^{2k} (uT,vT)_T
-    const auto qps_T = integrate(msh, cl, 2*celdeg);
-    for (auto& qp : qps_T)
-    {
-        const auto phi = cb.eval_functions(qp.point());
-
-        ret.block(0, 0, cbs, cbs) += qp.weight() * hT2k * phi * phi.transpose();
-    }
-
-    return ret;
-}
-
-
-// we compute hT^{-1} (uT - uF , vT - vF)_F + (\GRAD uT , \GRAD vT)_T
-template<typename Mesh>
-Matrix<typename Mesh::coordinate_type, Dynamic, Dynamic>
-make_scalar_stabilization_UC_star(const Mesh& msh, const typename Mesh::cell_type& cl,
-                                  const hho_degree_info& di)
-{
-    using T = typename Mesh::coordinate_type;
-    typedef Matrix<T, Dynamic, Dynamic> matrix_type;
-
-    const auto celdeg = di.cell_degree();
-    const auto facdeg = di.face_degree();
-
-    const auto cbs = scalar_basis_size(celdeg, Mesh::dimension);
-    const auto fbs = scalar_basis_size(facdeg, Mesh::dimension - 1);
-
-    const auto num_faces = howmany_faces(msh, cl);
-    const auto total_dofs = cbs + num_faces * fbs;
-
-    matrix_type       ret = matrix_type::Zero(total_dofs, total_dofs);
-
-    auto cb = make_scalar_monomial_basis(msh, cl, celdeg);
-
-    const auto fcs = faces(msh, cl);
-    for (size_t i = 0; i < num_faces; i++)
-    {
-        const auto fc = fcs[i];
-        auto fb = make_scalar_monomial_basis(msh, fc, facdeg);
-
-        // compute (uT - uF , vT - vF)_F
-        const auto qps_F = integrate(msh, fc, 2*std::max(facdeg, celdeg));
-        for (auto& qp : qps_F)
-        {
-            const auto c_phi = cb.eval_functions(qp.point());
-            const auto f_phi = fb.eval_functions(qp.point());
-
-            ret.block(0, 0, cbs, cbs) += qp.weight() * c_phi * c_phi.transpose();
-            ret.block(0, cbs + i * fbs, cbs, fbs) -= qp.weight() * c_phi * f_phi.transpose();
-            ret.block(cbs + i * fbs, 0, fbs, cbs) -= qp.weight() * f_phi * c_phi.transpose();
-            ret.block(cbs + i * fbs, cbs + i * fbs, fbs, fbs)
-                += qp.weight() * f_phi * f_phi.transpose();
-        }
-    }
-
-    // scale with hT^{-1}
-    const auto hT  = diameter(msh, cl);
-    ret = (1.0/hT) * ret;
-
-    // compute (\GRAD uT , \GRAD vT)_T
-    const auto qps_T = integrate(msh, cl, 2*celdeg);
-    for (auto& qp : qps_T)
-    {
-        const auto grad_phi = cb.eval_gradients(qp.point());
-
-        ret.block(0, 0, cbs, cbs) += qp.weight() * grad_phi * grad_phi.transpose();
-    }
-
-    return ret;
-}
-
 // noised rhs to add a noise to the known data
 template<typename Mesh, typename Element, typename Basis, typename Function>
 Matrix<typename Mesh::coordinate_type, Dynamic, 1>
@@ -1804,7 +1675,6 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     typedef Matrix<T, Dynamic, Dynamic> matrix_type;
     typedef Matrix<T, Dynamic, 1>       vector_type;
 
-    hho_degree_info hdi(degree, degree);
 
     auto rhs_fun = make_rhs_function(msh);
     auto sol_fun = make_solution_function(msh,omega);
@@ -1814,6 +1684,11 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto varpi_fun = make_varpi_function(msh);
     auto B_fun = make_B_function(msh);
 
+#if 0 // hybridized DG
+    hho_degree_info hdi(degree, degree);
+#else // HHO
+    hho_degree_info hdi(degree+1, degree);
+#endif
 
     auto assembler = make_helmholtz_UC_assembler(msh, hdi);
     auto assembler_sc = make_condensed_helmholtz_UC_assembler(msh, hdi);
@@ -1825,9 +1700,23 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         auto cb = make_scalar_monomial_basis(msh, cl, hdi.cell_degree());
         auto cbs = cb.size();
 
-        auto A         = make_DGH_laplacian(msh, cl, hdi);
-        auto stab        = make_scalar_stabilization_UC(msh, cl, hdi);
-        auto stab_star   = make_scalar_stabilization_UC_star(msh, cl, hdi);
+        T hT = diameter(msh, cl);
+        T noise = 1.0;
+        for(size_t i = 0; i < hdi.cell_degree(); i++)
+        {
+            noise = noise * hT;
+        }
+
+#if 0 // hybridized DG
+        auto A = make_DGH_laplacian(msh, cl, hdi);
+        auto stab = make_scalar_fool_stabilization(msh, cl, hdi);
+#else // HHO
+        auto A = make_vector_hho_gradrec(msh, cl, hdi).second;
+        auto stab = make_scalar_hdg_stabilization(msh, cl, hdi);
+#endif
+        auto stab_star = stab;
+        stab.block(0, 0, cbs, cbs) += noise * noise * make_mass_matrix(msh, cl, cb);
+        stab_star.block(0, 0, cbs, cbs) += make_stiffness_matrix(msh, cl, cb);
 
         // helmholtz term
         A.block(0, 0, cbs, cbs) -= omega * omega * make_mass_matrix(msh, cl, cb);
@@ -1848,12 +1737,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         lhs.block(0, 0, num_dofs_lap, num_dofs_lap) += gamma * stab;
 
         T coeff = 1.0;
-        T hT = diameter(msh, cl);
-        T noise = 1.0;
-        for(size_t i = 0; i < degree; i++)
-        {
-            noise = noise * hT;
-        }
+
         // m_h :
         if( varpi_fun(barycenter(msh,cl)) > 0.5)
         {
@@ -1991,8 +1875,22 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         {
             m_error += make_m_error(msh, cl, sol_fun, hdi, cell_dofs);
         }
-        auto stab        = make_scalar_stabilization_UC(msh, cl, hdi);
-        auto stab_star   = make_scalar_stabilization_UC_star(msh, cl, hdi);
+
+        T hT = diameter(msh, cl);
+        T noise = 1.0;
+        for(size_t i = 0; i < hdi.cell_degree(); i++)
+        {
+            noise = noise * hT;
+        }
+#if 0 // hybridized DG
+        auto stab = make_scalar_fool_stabilization(msh, cl, hdi);
+#else // HHO
+        auto stab = make_scalar_hdg_stabilization(msh, cl, hdi);
+#endif
+        auto stab_star = stab;
+        stab.block(0, 0, cbs, cbs) += noise * noise * make_mass_matrix(msh, cl, cb);
+        stab_star.block(0, 0, cbs, cbs) += make_stiffness_matrix(msh, cl, cb);
+
         s_error += fullsol.dot( stab*fullsol );
         s_star_error += dualsol.dot( stab_star * dualsol);
     }
