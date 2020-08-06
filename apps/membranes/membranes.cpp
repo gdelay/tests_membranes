@@ -3483,66 +3483,75 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
     hho_degree_info hdi(degree+1, degree);
 
-#if 0
+#if 1
     auto rhs_fun1 = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
         auto y1 = pt.y() - 0.5;
         auto r2 = x1*x1 + y1*y1;
         auto R2 = 1.0 / 9.0;
         if(r2 > R2)
-            return 8.0 * R2 - 16.0 * r2;
+            return -4.0;
         else
-            return - 8.0 * R2;
+            return -6.0;
     };
     auto rhs_fun2 = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
         auto y1 = pt.y() - 0.5;
         auto r2 = x1*x1 + y1*y1;
         auto R2 = 1.0 / 9.0;
+        auto r = std::sqrt(r2);
         if(r2 > R2)
-            return 0.0;
+            return (9.0*r2 - 4.0*r - R2) / r;
         else
-            return 8.0 * R2;
+            return -2.0;
     };
     auto sol_fun1 = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
         auto y1 = pt.y() - 0.5;
         auto r2 = x1*x1 + y1*y1;
         auto R2 = 1.0 / 9.0;
-        if(r2 > R2)
-            return (r2 - R2) * (r2 - R2);
-        else
-            return 0.0;
+
+        return r2 - R2;
     };
     auto sol_fun2 = [](const point_type& pt) -> T {
-        return 0.0;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        auto r = std::sqrt(r2);
+        if(r2 > R2)
+            return (1.0-r) * (r2 - R2);
+        else
+            return r2 - R2;
     };
     auto sol_grad1 = [](const point_type& pt) -> auto {
         Matrix<T, 1, 2> ret;
         auto x1 = pt.x() - 0.5;
         auto y1 = pt.y() - 0.5;
-        auto r2 = x1*x1 + y1*y1;
-        auto R2 = 1.0 / 9.0;
-        if(r2 > R2)
-        {
-            T coeff = 2.0*2.0*(r2 - R2);
-            ret(0) =  coeff * x1;
-            ret(1) =  coeff * y1;
-        }
-        else
-        {
-            ret(0) = 0.0;
-            ret(1) = 0.0;
-        }
+        ret(0) = 2*x1;
+        ret(1) = 2*y1;
         return ret;
     };
     auto sol_grad2 = [](const point_type& pt) -> auto {
         Matrix<T, 1, 2> ret;
-
-        ret(0) = 0.0;
-        ret(1) = 0.0;
-
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        auto r = std::sqrt(r2);
+        if(r2 > R2)
+        {
+            T coeff = (2.*r - 3.*r2 - R2) / r;
+            ret(0) = coeff * x1;
+            ret(1) = coeff * y1;
+        }
+        else
+        {
+            ret(0) = 2*x1;
+            ret(1) = 2*y1;
+        }
         return ret;
+
     };
     auto mult_fun = [](const point_type& pt) -> T {
         auto x1 = pt.x() - 0.5;
@@ -3552,7 +3561,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         if(r2 > R2)
             return 0.0;
         else
-            return 8.0 * R2;
+            return 2.0;
     };
 #else
     auto rhs_fun1 = [](const point_type& pt) -> T {
