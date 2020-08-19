@@ -3490,6 +3490,77 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         auto r2 = x1*x1 + y1*y1;
         auto R2 = 1.0 / 9.0;
         if(r2 > R2)
+            return 8.0 * R2 - 16.0 * r2;
+        else
+            return - 8.0 * R2;
+    };
+    auto rhs_fun2 = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return 0.0;
+        else
+            return 8.0 * R2;
+    };
+    auto sol_fun1 = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return (r2 - R2) * (r2 - R2);
+        else
+            return 0.0;
+    };
+    auto sol_fun2 = [](const point_type& pt) -> T {
+        return 0.0;
+    };
+    auto sol_grad1 = [](const point_type& pt) -> auto {
+        Matrix<T, 1, 2> ret;
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+        {
+            T coeff = 2.0*2.0*(r2 - R2);
+            ret(0) =  coeff * x1;
+            ret(1) =  coeff * y1;
+        }
+        else
+        {
+            ret(0) = 0.0;
+            ret(1) = 0.0;
+        }
+        return ret;
+    };
+    auto sol_grad2 = [](const point_type& pt) -> auto {
+        Matrix<T, 1, 2> ret;
+
+        ret(0) = 0.0;
+        ret(1) = 0.0;
+
+        return ret;
+    };
+    auto mult_fun = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
+            return 0.0;
+        else
+            return 8.0 * R2;
+    };
+#elif 1
+    auto rhs_fun1 = [](const point_type& pt) -> T {
+        auto x1 = pt.x() - 0.5;
+        auto y1 = pt.y() - 0.5;
+        auto r2 = x1*x1 + y1*y1;
+        auto R2 = 1.0 / 9.0;
+        if(r2 > R2)
             return -4.0;
         else
             return -6.0;
