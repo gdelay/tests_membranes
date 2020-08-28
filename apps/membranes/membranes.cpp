@@ -3727,11 +3727,14 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     };
 #endif
 
+    clock_t t1, t2;
+    T assembly_time = 0.0, solve_time = 0.0;
 
     auto assembler_sc = make_membrane_condensed_assembler_Lag(msh, hdi);
 
     bool scond = true; // static condensation
 
+    t1 = clock();
     for (auto& cl : msh)
     {
         auto cb     = make_scalar_Lagrange_basis(msh, cl, hdi.cell_degree());
@@ -3748,6 +3751,8 @@ run_membranes_solver(const Mesh& msh, size_t degree)
         }
     }
 
+    t2 = clock();
+    assembly_time += (T)(t2-t1)/CLOCKS_PER_SEC;
 
     if(scond)
         std::cout << green << "end assembly : nb dof = " << assembler_sc.RHS.size() << std::endl;
@@ -3763,6 +3768,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     // Newton loop
     while(!stop_loop)
     {
+        t1 = clock();
         if(scond)
         {
             if(Newton_iter == 0)
@@ -3779,15 +3785,22 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             //     assembler.update_mat(msh, sol, sol_fun);
             // systsz = assembler.LHS.rows();
         }
+        t2 = clock();
+        assembly_time += (T)(t2-t1)/CLOCKS_PER_SEC;
+
         sol = dynamic_vector<T>::Zero(systsz);
 
         disk::solvers::pardiso_params<T> pparams;
         pparams.report_factorization_Mflops = false;
 
+        t1 = clock();
         if(scond)
             mkl_pardiso(pparams, assembler_sc.LHS, assembler_sc.RHS, sol);
         // else
             // mkl_pardiso(pparams, assembler.LHS, assembler.RHS, sol);
+
+        t2 = clock();
+        solve_time += (T)(t2-t1)/CLOCKS_PER_SEC;
 
         Newton_iter++;
         std::cout << blue << "end Newton iter nb " << Newton_iter << std::endl;
@@ -3823,6 +3836,7 @@ run_membranes_solver(const Mesh& msh, size_t degree)
 
         Eigen::Matrix<T, Eigen::Dynamic, 1> fullsol, mult_sol;
 
+        t1 = clock();
         if(scond)
         {
             fullsol = assembler_sc.take_u(msh, cl, sol, sol_fun1, sol_fun2);
@@ -3833,6 +3847,8 @@ run_membranes_solver(const Mesh& msh, size_t degree)
             // fullsol = assembler.take_u(msh, cl, sol, sol_fun);
             // mult_sol = assembler.take_mult(msh, cl, sol);
         }
+        t2 = clock();
+        assembly_time += (T)(t2-t1)/CLOCKS_PER_SEC;
 
         auto cell_dofs1 = fullsol.head( cbs );
         Matrix<T, Dynamic, 1> cell_dofs2 = fullsol.block( cbs + num_faces * fbs, 0, cbs, 1);
@@ -3942,6 +3958,8 @@ run_membranes_solver(const Mesh& msh, size_t degree)
     std::cout << yellow << "ended run : H1-error is " << std::sqrt(u_H1_error) << std::endl;
     std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
     std::cout << yellow << "            mult-L2-error is " << std::sqrt(mult_L2_error) << std::endl;
+    std::cout << nocolor << "time : assembly : " << assembly_time << " sec" << std::endl;
+    std::cout << nocolor << "       solve    : " << solve_time    << " sec" << std::endl;
     
     return std::sqrt(u_H1_error);
 }
