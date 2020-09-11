@@ -1738,6 +1738,10 @@ run_Helmholtz(const Mesh& msh, size_t degree)
 
         T coeff = 1.0;
 
+        // stronger noise
+        // noise = noise / hT;
+        // noise = 0.0;
+
         // m_h :
         if( varpi_fun(barycenter(msh,cl)) > 0.5)
         {
