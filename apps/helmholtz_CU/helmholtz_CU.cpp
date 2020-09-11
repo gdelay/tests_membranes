@@ -1795,6 +1795,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     T u_L2_error = 0.0;
     T u_H1_error_B = 0.0;
     T u_L2_error_B = 0.0;
+    T z_H1_error = 0.0;
     T z_L2_error = 0.0;
 
     T m_error = 0.0;
@@ -1854,6 +1855,12 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             T z = cell_dofs_z.dot( t_phi );
             z_L2_error += qp.weight() * z * z;
 
+            Matrix<T, 1, dim> grad_z = Matrix<T, 1, dim>::Zero();
+            for (size_t i = 0; i < cbs; i++ )
+                grad_z += cell_dofs_z(i) * t_dphi.block(i, 0, 1, dim);
+
+            z_H1_error += qp.weight() * grad_z.dot(grad_z);
+
             if( B_fun(barycenter(msh,cl)) > 0.5 )
             {
                 u_H1_error_B += qp.weight() * (grad_ref - grad).dot(grad_ref - grad);
@@ -1910,6 +1917,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error) << std::endl;
     std::cout << yellow << "--in B      H1-error is " << std::sqrt(u_H1_error_B) << std::endl;
     std::cout << yellow << "            L2-error is " << std::sqrt(u_L2_error_B) << std::endl;
+    std::cout << yellow << "            z-H1-error is " << std::sqrt(z_H1_error) << std::endl;
     std::cout << yellow << "            z-L2-error is " << std::sqrt(z_L2_error) << std::endl;
     std::cout << std::endl;
     std::cout << blue <<   "            m-error is  " << std::sqrt(m_error) << std::endl;
