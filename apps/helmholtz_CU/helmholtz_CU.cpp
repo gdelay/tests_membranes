@@ -299,6 +299,28 @@ auto make_B_function(const Mesh& msh)
     return B_functor<Mesh>();
 }
 
+
+
+/////// test_info -> for error output
+template<typename T>
+class test_info {
+public:
+    test_info()
+        {
+            H1_Om = 0.0;
+            L2_Om = 0.0;
+            H1_B = 0.0;
+            L2_B = 0.0;
+            H1_z = 0.0;
+        }
+    T H1_Om; // H1-error in Omega
+    T L2_Om; // L2-error in Omega
+    T H1_B; // H1-error in B
+    T L2_B; // L2-error in B
+    T H1_z; // H1-error for the dual variable
+};
+
+
 ////////////////////////////////////////////////////////////////////////////
 ////////////////////////   ASSEMBLERS  /////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////
@@ -1666,7 +1688,7 @@ make_m_error(const Mesh& msh, const typename Mesh::cell_type& cl,
 
 
 template<typename Mesh>
-typename Mesh::coordinate_type
+test_info<typename Mesh::coordinate_type>
 run_Helmholtz(const Mesh& msh, size_t degree)
 {
     using T = typename Mesh::coordinate_type;
@@ -1947,45 +1969,77 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     silo.close();
 #endif
 
-    return std::sqrt(u_L2_error_B);
+    // return errors
+    test_info<T> TI;
+    TI.H1_Om = std::sqrt(u_H1_error);
+    TI.L2_Om = std::sqrt(u_L2_error);
+    TI.H1_B  = std::sqrt(u_H1_error_B);
+    TI.L2_B  = std::sqrt(u_L2_error_B);
+    TI.H1_z  = std::sqrt(z_H1_error);
+
+    return TI;
 }
 
 
-template<typename Mesh>
-struct test_functor
-{
-    /* Expect k+1 convergence (hho stabilization, energy norm) */
-    typename Mesh::coordinate_type
-    operator()(const Mesh& msh, size_t degree) const
-    {
-        return run_Helmholtz(msh, degree);
-    }
-
-    size_t
-    expected_rate(size_t k)
-    {
-        return k;
-    }
-};
-
-
-template<typename Mesh>
+template<typename T>
 void
-run_diffusion_solver(const Mesh& msh)
+tests_auto()
 {
-    run_Helmholtz(msh, 0);
+    typedef disk::generic_mesh<T, 2>  mesh_type;
+
+    // list of used meshes
+    std::vector<std::string> meshfiles;
+    meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
+    meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
+    meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
+    meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
+
+    // list of export files
+    std::vector<std::string> files;
+    files.push_back("./test_k0.txt");
+    files.push_back("./test_k1.txt");
+    files.push_back("./test_k2.txt");
+    files.push_back("./test_k3.txt");
+
+    // we test degrees from 1 to 3
+    for(int degree=1; degree < 4; degree++)
+    {
+        std::cout << nocolor << " WORKING WITH k = " << degree << std::endl;
+
+        // open the output file
+        std::ofstream file;
+        file.open (files.at(degree), std::ios::in | std::ios::trunc);
+        if (!file.is_open())
+            throw std::logic_error("file not open");
+
+        // init the file
+        file << "N\tB_L2\tB_H1\tOmega_L2\tOmega_H1\tz_H1" << std::endl;
+
+        // we test all the meshes in the list
+        for(size_t i=0; i < meshfiles.size(); i++)
+        {
+            // load the mesh
+            mesh_type msh;
+            disk::fvca5_mesh_loader<T, 2> loader;
+            if (!loader.read_mesh(meshfiles.at(i)) )
+            {
+                std::cout << "Problem loading mesh." << std::endl;
+            }
+            loader.populate_mesh(msh);
+
+            // test this mesh
+            auto TI = run_Helmholtz(msh, degree);
+
+            // write the results in the file
+            file << i+1 << "\t" << TI.L2_B << "\t" << TI.H1_B << "\t"
+                 << TI.L2_Om << "\t" << TI.H1_Om << "\t" << TI.H1_z
+                 << std::endl;
+        }
+
+        // close the file
+        file.close();
+    }
 }
-
-
-#if 0
-int main(void)
-{
-    tester<test_functor> tstr;
-    tstr.run();
-    return 0;
-}
-#endif
-
 
 #if 1
 int main(void)
@@ -2001,33 +2055,7 @@ int main(void)
 
     if(1)
     {
-        std::vector<std::string> meshfiles;
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_1.typ1");
-        // meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_2.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_3.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_4.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_5.typ1");
-        meshfiles.push_back("../../../diskpp/meshes/2D_triangles/fvca5/mesh1_6.typ1");
-
-        // 3D
-        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-8-8-8.hex");
-        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-16-16-16.hex");
-        // meshfiles.push_back("../../../diskpp/meshes/3D_hexa/diskpp/testmesh-32-32-32.hex");
-
-        for(size_t i=0; i < meshfiles.size(); i++)
-        {
-            mesh_type msh;
-            disk::fvca5_mesh_loader<T, 2> loader;
-            // disk::netgen_mesh_loader<T, 3> loader;
-            // disk::cartesian_mesh_loader<T, 3> loader;
-            if (!loader.read_mesh(meshfiles.at(i)) )
-            {
-                std::cout << "Problem loading mesh." << std::endl;
-            }
-            loader.populate_mesh(msh);
-            run_Helmholtz(msh, degree);
-        }
-
+        tests_auto<T>();
     }
     else
     {
