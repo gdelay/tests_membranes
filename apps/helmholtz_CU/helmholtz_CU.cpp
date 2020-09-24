@@ -199,8 +199,9 @@ struct varpi_functor< Mesh<T, 2, Storage> >
 
         // bool Ndom1 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
         // bool Ndom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875);
-        bool Ndom3 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125);
-        if( Ndom3 )
+        // bool Ndom3 = (pt.x() >= 0.0) && (pt.x() <= 0.875) && (pt.y() >= 0.125);
+        bool Ndom4 = !( (pt.x() >= 0.25) && (pt.x() <= 0.75) && (pt.y() <= 0.5) );
+        if( Ndom4 )
             ret = 0.0;
         else
             ret = 1.0;
@@ -257,9 +258,10 @@ struct B_functor< Mesh<T, 2, Storage> >
         // bool Ndom1 = (pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125) && (pt.y() <= 0.875);
         // bool Ndom2 = (pt.y() >= 0.125) && (pt.y() <= 0.875) &&
         //     ( ((pt.x() >= 0.0) && (pt.x() <= 0.25)) || ((pt.x() >= 0.75) && (pt.x() <= 1.0)) );
-        bool Ndom3 = ((pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125)) ||
-            ((pt.y() >= 0.875) && (pt.x() <= 0.875));
-        if( Ndom3 )
+        // bool Ndom3 = ((pt.x() >= 0.0) && (pt.x() <= 0.125) && (pt.y() >= 0.125)) ||
+        //     ((pt.y() >= 0.875) && (pt.x() <= 0.875));
+        bool Ndom4 = !( (pt.x() >= 0.125) && (pt.x() <= 0.875) && (pt.y() <= 0.875) );
+        if( Ndom4 )
             ret = 0.0;
         else
             ret = 1.0;
