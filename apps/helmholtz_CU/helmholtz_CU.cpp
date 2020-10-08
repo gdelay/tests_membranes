@@ -1721,7 +1721,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
     auto varpi_fun = make_varpi_function(msh);
     auto B_fun = make_B_function(msh);
 
-#if 0 // hybridized DG
+#if 1 // hybridized DG
     hho_degree_info hdi(degree, degree);
 #else // HHO
     hho_degree_info hdi(degree+1, degree);
@@ -1739,20 +1739,25 @@ run_Helmholtz(const Mesh& msh, size_t degree)
 
         T hT = diameter(msh, cl);
         T noise = 1.0;
-        for(size_t i = 0; i < hdi.cell_degree(); i++)
+        // for(size_t i = 0; i < hdi.cell_degree(); i++)
+        // {
+        //     noise = noise * hT;
+        // }
+        for(size_t i = 0; i < hdi.face_degree(); i++)
         {
-            noise = noise * hT;
+            noise =  noise * hT / std::sqrt(2.);
         }
 
-#if 0 // hybridized DG
+#if 1 // hybridized DG
         auto A = make_DGH_laplacian(msh, cl, hdi);
         auto stab = make_scalar_fool_stabilization(msh, cl, hdi);
 #else // HHO
         auto A = make_vector_hho_gradrec(msh, cl, hdi).second;
         auto stab = make_scalar_hdg_stabilization(msh, cl, hdi);
+        // auto stab = make_scalar_fool_stabilization(msh, cl, hdi);
 #endif
         auto stab_star = stab;
-        stab.block(0, 0, cbs, cbs) += noise * noise * make_mass_matrix(msh, cl, cb);
+        stab.block(0, 0, cbs, cbs) += (noise / 2.) * noise * make_mass_matrix(msh, cl, cb);
         stab_star.block(0, 0, cbs, cbs) += make_stiffness_matrix(msh, cl, cb);
 
         // helmholtz term
@@ -1773,7 +1778,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
             -= gamma_star * stab_star;
         lhs.block(0, 0, num_dofs_lap, num_dofs_lap) += gamma * stab;
 
-        T coeff = 1.0;
+        T coeff = 0.5;
 
         // stronger noise
         // noise = noise / hT;
@@ -1930,7 +1935,7 @@ run_Helmholtz(const Mesh& msh, size_t degree)
         {
             noise = noise * hT;
         }
-#if 0 // hybridized DG
+#if 1 // hybridized DG
         auto stab = make_scalar_fool_stabilization(msh, cl, hdi);
 #else // HHO
         auto stab = make_scalar_hdg_stabilization(msh, cl, hdi);
