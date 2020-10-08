@@ -73,10 +73,15 @@ struct solution_functor< Mesh<T, 2, Storage> >
 
     scalar_type operator()(const point_type& pt) const
     {
-        T coeff = omega / std::sqrt(2);
-        auto cos_cx = std::cos(coeff * pt.x());
-        auto cos_cy = std::cos(coeff * pt.y());
-        return cos_cx * cos_cy;
+        int N = 3;
+        assert( N > omega );
+        // T coeff = omega / std::sqrt(2);
+        // auto cos_cx = std::cos(coeff * pt.x());
+        // auto cos_cy = std::cos(coeff * pt.y());
+        // return cos_cx * cos_cy;
+        T coeff = std::sqrt( N*N - omega*omega );
+        T sinh = 0.5 * ( std::exp(coeff * pt.y()) - std::exp(-coeff * pt.y()) );
+        return std::sin(N * pt.x()) * sinh / coeff;
     }
 };
 
@@ -129,15 +134,23 @@ struct grad_functor< Mesh<T, 2, Storage> >
 
     auto operator()(const point_type& pt) const
     {
+        int N = 3;
         Matrix<T, 1, 2> ret;
-        T coeff = omega / std::sqrt(2);
-        auto sin_cx = std::sin(coeff * pt.x());
-        auto sin_cy = std::sin(coeff * pt.y());
-        auto cos_cx = std::cos(coeff * pt.x());
-        auto cos_cy = std::cos(coeff * pt.y());
+        // T coeff = omega / std::sqrt(2);
+        // auto sin_cx = std::sin(coeff * pt.x());
+        // auto sin_cy = std::sin(coeff * pt.y());
+        // auto cos_cx = std::cos(coeff * pt.x());
+        // auto cos_cy = std::cos(coeff * pt.y());
 
-        ret(0) = - coeff * sin_cx * cos_cy;
-        ret(1) = - coeff * cos_cx * sin_cy;
+        T coeff = std::sqrt( N*N - omega*omega );
+        T sinh = 0.5 * ( std::exp(coeff * pt.y()) - std::exp(-coeff * pt.y()) );
+        T cosh = 0.5 * ( std::exp(coeff * pt.y()) + std::exp(-coeff * pt.y()) );
+
+        // ret(0) = - coeff * sin_cx * cos_cy;
+        // ret(1) = - coeff * cos_cx * sin_cy;
+
+        ret(0) = N * std::cos(N*pt.x()) * sinh / coeff;
+        ret(1) = std::sin(N*pt.x()) * cosh;
         return ret;
     }
 };
